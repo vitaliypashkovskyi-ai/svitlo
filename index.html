@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Світло Київ</title>
+<meta name="description" content="Онлайн-графік відключень світла ДТЕК Київ за чергами">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one column — 24-hour clock hero, day timelines, then the all-queues grid. Deliberately dark-only. */
+:root{
+  --bg:#0b0f15; --surface:#131922; --surface-2:#1d2430; --fg:#eef2f6; --muted:#8d99a8; --line:#222b37;
+  --on:#ffd23f; --on-ink:#2e2400; --off:#262f3d; --off-ink:#eef2f6; --maybe:#4f5b6b;
+  --now:#ff5a5f; --accent:#ffd23f;
+  --f-display:"Manrope",system-ui,sans-serif;
+  --f-body:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--f-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:880px;margin:0 auto;padding-block:24px 48px;display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font:700 clamp(22px,4vw,30px)/1.1 var(--f-display);margin:0;letter-spacing:-.01em;text-wrap:balance}
+h1 small{display:block;font:500 13px/1.4 var(--f-body);color:var(--muted);letter-spacing:.02em;margin-top:6px}
+h2{font:600 13px/1.3 var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0}
+[hidden]{display:none!important}
+.pick{display:flex;align-items:center;gap:8px}
+.pick label{font-size:13px;color:var(--muted)}
+select{font:600 16px var(--f-mono);padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.status{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:24px 20px;display:flex;flex-direction:column;align-items:center;gap:18px}
+.clock{position:relative;width:min(360px,100%);aspect-ratio:1}
+.clock svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.clock .seg-on{fill:var(--on)} .clock .seg-off{fill:var(--off)} .clock .seg-maybe{fill:var(--maybe)}
+.clock .seg-past{opacity:.45}
+.clock .hl{fill:var(--muted);font:500 13px var(--f-mono)}
+.clock .hand{stroke:var(--now);stroke-width:4;stroke-linecap:round}
+.clock .center{position:absolute;inset:19%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px}
+.center .s{font:500 12px var(--f-body);text-transform:uppercase;letter-spacing:.14em;color:var(--muted)}
+.status .state{font:800 clamp(26px,8vw,40px)/1.05 var(--f-display);margin:0;letter-spacing:-.01em}
+.status.is-on .state{color:var(--on)}
+.status .next{margin:0;font:600 clamp(10px,2.8vw,13px)/1.4 var(--f-mono);color:var(--on);white-space:nowrap}
+.status .next b{font-weight:600}
+.status .chips-title{align-self:stretch;margin:0;font-size:13px;color:var(--muted)}
+.status .intervals{align-self:stretch;margin-top:-10px}
+
+.day{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.day-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline}
+.day-head .sum{font-size:13px;color:var(--muted)}
+.bar{position:relative;display:grid;grid-template-columns:repeat(48,1fr);height:44px;border-radius:8px;overflow:hidden;gap:1px;background:var(--line)}
+.c-on{background:var(--on)} .c-off{background:var(--off)}
+.c-maybe{background:repeating-linear-gradient(135deg,var(--maybe) 0 4px,transparent 4px 8px),var(--surface)}
+.nowline{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--now);border-radius:2px;pointer-events:none}
+.ticks{display:grid;grid-template-columns:repeat(24,1fr);font:400 11px var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.ticks span:nth-child(odd){visibility:hidden}
+@media (min-width:640px){.ticks span:nth-child(odd){visibility:visible}}
+.intervals{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.intervals li{font:600 14px var(--f-mono);font-variant-numeric:tabular-nums;padding:7px 12px;border-radius:10px;background:var(--surface-2);color:var(--fg)}
+.intervals li.maybe{background:transparent;border:1px dashed var(--maybe);color:var(--fg)}
+.intervals .none{background:var(--on);color:var(--on-ink)}
+.empty{color:var(--muted);margin:0}
+
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px}
+
+.grid-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+@media (max-width:600px){.cols{grid-template-columns:1fr}}
+.col{border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--surface-2);min-width:0}
+.col.on{background:color-mix(in srgb,var(--on) 14%,var(--surface-2))}
+.col-list{display:flex;flex-direction:column;gap:8px;max-height:min(560px,65vh);overflow-y:auto;overscroll-behavior:contain;padding-right:4px;margin-right:-4px;scrollbar-width:thin;scrollbar-color:var(--off) transparent}
+.col h3{margin:0 0 4px;font:800 16px var(--f-display);display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.col h3 span{font:600 13px var(--f-mono);color:var(--muted)}
+.qcard{all:unset;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--surface);cursor:pointer;border:2px solid transparent}
+.qcard:hover{border-color:var(--line)}
+.qcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.qcard.sel{border-color:var(--on)}
+.qcard b{font:800 17px var(--f-display);display:block}
+.qcard small{display:block;font:500 11px var(--f-mono);color:var(--muted)}
+.qcard .t{text-align:right;font:600 13px var(--f-mono);white-space:nowrap}
+
+footer{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:space-between}
+footer a{color:var(--accent)}
+button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:4px 10px;cursor:pointer}
+.addr{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.addr-row{display:grid;grid-template-columns:1fr 140px;gap:12px}
+@media (max-width:480px){.addr-row{grid-template-columns:1fr}}
+.combo{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0}
+.combo label{font-size:13px;color:var(--muted)}
+.combo input{font:500 16px var(--f-body);padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+.combo input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.combo input:disabled{opacity:.5}
+.opts{position:absolute;top:100%;left:0;right:0;z-index:5;margin:4px 0 0;padding:4px;list-style:none;background:var(--surface);border:1px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;box-shadow:0 8px 24px rgb(0 0 0 / .18)}
+.opts li{padding:8px 10px;border-radius:6px;cursor:pointer}
+.opts li[aria-selected="true"],.opts li:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.opts li.hint{color:var(--muted);cursor:default;background:none}
+.addr-msg{margin:0;font-size:14px;color:var(--muted)}
+.addr-msg b{color:var(--fg)}
+.addr-msg a{color:var(--accent)}
+.err{background:color-mix(in srgb,var(--now) 14%,var(--surface));border:1px solid var(--now);border-radius:12px;padding:12px 16px}
+@media (max-width:480px){.status{grid-template-columns:1fr;text-align:left}.bulb{width:52px;height:52px}}
+@media (prefers-reduced-motion:no-preference){.status .bulb{transition:background .3s,box-shadow .3s}}
+.lang{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.lang button{all:unset;cursor:pointer;padding:7px 11px;font:600 13px var(--f-mono);color:var(--muted)}
+.lang button[aria-pressed="true"]{background:var(--on);color:var(--on-ink)}
+.lang button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span data-i18n="title">Світло в Києві</span><small data-i18n="subtitle">Графік відключень ДТЕК Київські електромережі</small></h1>
+    <div class="tools">
+      <div class="pick">
+        <label for="queue" data-i18n="queue">Черга</label>
+        <select id="queue"></select>
+      </div>
+      <div class="lang" role="group" aria-label="Мова / Language">
+        <button type="button" data-lang="uk" aria-pressed="true">УКР</button>
+        <button type="button" data-lang="en" aria-pressed="false">ENG</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="addr" id="addr" hidden>
+    <h2 data-i18n="addrTitle">Знайти чергу за адресою</h2>
+    <div class="addr-row">
+      <div class="combo">
+        <label for="street" data-i18n="street">Вулиця</label>
+        <input id="street" type="text" autocomplete="off" data-i18n-ph="streetPh" placeholder="Наприклад, Хрещатик" role="combobox" aria-expanded="false" aria-controls="streetList">
+        <ul class="opts" id="streetList" role="listbox" hidden></ul>
+      </div>
+      <div class="combo house">
+        <label for="house" data-i18n="house">Будинок</label>
+        <input id="house" type="text" autocomplete="off" placeholder="№" disabled role="combobox" aria-expanded="false" aria-controls="houseList">
+        <ul class="opts" id="houseList" role="listbox" hidden></ul>
+      </div>
+    </div>
+    <p class="addr-msg" id="addrMsg"></p>
+  </section>
+  <p class="addr-msg" id="addrOff" data-i18n-html="addrOff" hidden></p>
+
+  <div id="error" class="err" hidden></div>
+
+  <section class="status" id="status" aria-live="polite">
+    <div class="clock">
+      <svg id="clockSvg" viewBox="-170 -170 340 340" role="img" data-i18n-aria="clockAria"></svg>
+      <div class="center">
+        <span class="s" data-i18n="now">зараз</span>
+        <p class="state" id="stateText" data-i18n="loading">Завантаження…</p>
+        <p class="next" id="nextText"></p>
+      </div>
+    </div>
+    <p class="chips-title" id="todayTitle"></p>
+    <ul class="intervals" id="todayChips"></ul>
+  </section>
+
+  <div id="days"></div>
+
+  <div class="legend">
+    <span><i class="c-on"></i><span data-i18n="legendOn">Світло є</span></span>
+    <span><i class="c-off"></i><span data-i18n="legendOff">Світла немає</span></span>
+    <span><i class="c-maybe"></i><span data-i18n="legendMaybe">Можливе відключення</span></span>
+    <span><i style="background:var(--now);width:3px"></i><span data-i18n="legendNow">Зараз</span></span>
+  </div>
+
+  <section class="grid-card">
+    <div class="day-head"><h2 data-i18n="allTitle">Усі черги зараз</h2><span class="sum" data-i18n="allSum"></span></div>
+    <div class="cols" id="allCols"></div>
+  </section>
+
+  <footer>
+    <span id="updated">—</span>
+    <span><button class="refresh" id="refresh" type="button" data-i18n="refresh">Оновити</button></span>
+    <span data-i18n-html="source"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const SRC = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/kyiv.json";
+  const TZ = "Europe/Kyiv";
+  const $ = id => document.getElementById(id);
+  let data = null;
+
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch {} }
+  };
+
+  // ---------- Translations: Ukrainian (default) and English ----------
+  const DTEK = '<a href="https://www.dtek-kem.com.ua/ua/shutdowns" target="_blank" rel="noopener">';
+  const GH = '<a href="https://github.com/Baskerville42/outage-data-ua" target="_blank" rel="noopener">outage-data-ua</a>';
+  const T = {
+    uk: {
+      locale:"uk-UA", pageTitle:"Світло Київ",
+      title:"Світло в Києві", subtitle:"Графік відключень ДТЕК Київські електромережі", queue:"Черга",
+      addrTitle:"Знайти чергу за адресою", street:"Вулиця", house:"Будинок", streetPh:"Наприклад, Хрещатик",
+      addrOff:`Свою чергу можна дізнатися за адресою на ${DTEK}сайті ДТЕК</a>.`,
+      clockAria:"Сьогоднішній графік на 24-годинному циферблаті", now:"зараз", loading:"Завантаження…",
+      legendOn:"Світло є", legendOff:"Світла немає", legendMaybe:"Можливе відключення", legendNow:"Зараз",
+      allTitle:"Усі черги зараз", allSum:"Усі 60 черг — прокрутіть список. Натисніть, щоб вибрати",
+      refresh:"Оновити", source:`Дані: ${DTEK}ДТЕК КЕМ</a> через ${GH}. Перевіряйте офіційний сайт.`,
+      dur:(h,m)=> h ? `${h} год ${String(m).padStart(2,"0")} хв` : `${m} хв`,
+      noSchedule:"Немає графіка", notPubToday:"ДТЕК ще не опублікував графік на сьогодні",
+      stOn:"Світло є", stOff:"Немає світла", stMaybe:"Можливо немає",
+      noMoreOff:"відключень не буде", untilEnd:"до кінця графіка",
+      next:(kind,day,t,left)=>`${{on:"світло",off:"відключення",maybe:"можливе відкл."}[kind]} ${day?"завтра ":""}о ${t} · через ${left}`,
+      offToday:d=>`Без світла сьогодні · ${d}`, noOffToday:"Сьогодні відключень немає", maybe:"можливо",
+      today:"Сьогодні", tomorrow:"Завтра",
+      tomorrowEmpty:"Графік на завтра ще не опубліковано. ДТЕК зазвичай публікує його ввечері.",
+      daySum:(off,on)=>`Без світла ${off}, зі світлом ${on}`, noOutages:"Відключень немає", outages:"Відключення",
+      allDayOn:"Увесь день зі світлом", todayNotPub:"Графік на сьогодні ще не опубліковано.",
+      count:n=>`${n} ${n%10===1&&n%100!==11?"черга":[2,3,4].includes(n%10)&&![12,13,14].includes(n%100)?"черги":"черг"}`,
+      nobody:"Зараз ні в кого", everyone:"Зараз у всіх є світло", same:"як",
+      cardOn:(day,t)=>`до ${day?"завтра ":""}${t}`, cardOff:(day,t)=>`світло ${day?"завтра ":""}з ${t}`,
+      inT:l=>`через ${l}`,
+      updated:(a,b)=>`ДТЕК оновив: ${a} · перевірено: ${b}`,
+      loadErr:m=>`Не вдалося завантажити графік (${m}). Перевірте інтернет і натисніть «Оновити».`, noData:"Немає даних",
+      notFound:"Нічого не знайдено", searchErr:"Помилка пошуку: ",
+      yourAddr:(l,q)=>[`Ваша адреса: `, l, ` — черга ${q}`],
+      pickHouse:"Тепер виберіть номер будинку", searching:"Шукаю чергу…", noGroup:"для цього будинку черга не вказана",
+      notInSchedule:(l,q)=>`${l}: черга ${q}, але її немає в поточному графіку ДТЕК.`, lookupErr:"Не вдалося дізнатися чергу: "
+    },
+    en: {
+      locale:"en-GB", pageTitle:"Power in Kyiv",
+      title:"Power in Kyiv", subtitle:"DTEK Kyiv Electric Networks outage schedule", queue:"Queue",
+      addrTitle:"Find your queue by address", street:"Street", house:"House", streetPh:"In Ukrainian, e.g. Хрещатик",
+      addrOff:`You can look up your queue by address on the ${DTEK}DTEK website</a>.`,
+      clockAria:"Today's schedule on a 24-hour dial", now:"now", loading:"Loading…",
+      legendOn:"Power on", legendOff:"Power off", legendMaybe:"Possible outage", legendNow:"Now",
+      allTitle:"All queues now", allSum:"All 60 queues — scroll the list. Tap one to select it",
+      refresh:"Refresh", source:`Data: ${DTEK}DTEK KEM</a> via ${GH}. Always check the official site.`,
+      dur:(h,m)=> h ? `${h} h ${String(m).padStart(2,"0")} min` : `${m} min`,
+      noSchedule:"No schedule", notPubToday:"DTEK hasn't published today's schedule yet",
+      stOn:"Power on", stOff:"Power off", stMaybe:"Maybe off",
+      noMoreOff:"no more outages", untilEnd:"until end of schedule",
+      next:(kind,day,t,left)=>`${{on:"back on",off:"outage",maybe:"possible outage"}[kind]} ${day?"tomorrow ":""}at ${t} · in ${left}`,
+      offToday:d=>`Without power today · ${d}`, noOffToday:"No outages today", maybe:"possible",
+      today:"Today", tomorrow:"Tomorrow",
+      tomorrowEmpty:"Tomorrow's schedule isn't published yet. DTEK usually posts it in the evening.",
+      daySum:(off,on)=>`Off ${off}, on ${on}`, noOutages:"No outages", outages:"Outages",
+      allDayOn:"Power on all day", todayNotPub:"Today's schedule isn't published yet.",
+      count:n=>`${n} ${n===1?"queue":"queues"}`,
+      nobody:"Nobody right now", everyone:"Everyone has power right now", same:"same as",
+      cardOn:(day,t)=>`until ${day?"tomorrow ":""}${t}`, cardOff:(day,t)=>`back ${day?"tomorrow ":""}at ${t}`,
+      inT:l=>`in ${l}`,
+      updated:(a,b)=>`DTEK updated: ${a} · checked: ${b}`,
+      loadErr:m=>`Couldn't load the schedule (${m}). Check your connection and press Refresh.`, noData:"No data",
+      notFound:"Nothing found", searchErr:"Search error: ",
+      yourAddr:(l,q)=>[`Your address: `, l, ` — queue ${q}`],
+      pickHouse:"Now pick the house number", searching:"Looking up your queue…", noGroup:"no queue is listed for this house",
+      notInSchedule:(l,q)=>`${l}: queue ${q}, but it isn't in DTEK's current schedule.`, lookupErr:"Couldn't look up the queue: "
+    }
+  };
+  let lang = store.get("svitlo.lang") === "en" ? "en" : "uk";   // Ukrainian by default
+  const t = k => T[lang][k];
+
+  function applyLang(){
+    document.documentElement.lang = lang;
+    document.title = t("pageTitle");
+    document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
+    document.querySelectorAll("[data-i18n-html]").forEach(el => el.innerHTML = t(el.dataset.i18nHtml)); // trusted strings from T only
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => el.placeholder = t(el.dataset.i18nPh));
+    document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
+    document.querySelectorAll(".lang button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  }
+
+  // Each hour value -> two half-hour slots: "on" | "off" | "maybe"
+  const SLOT = {
+    yes:["on","on"], no:["off","off"], first:["off","on"], second:["on","off"],
+    maybe:["maybe","maybe"], mfirst:["maybe","on"], msecond:["on","maybe"]
+  };
+  const slotsOf = hours => {
+    const out = [];
+    for (let h = 1; h <= 24; h++) out.push(...(SLOT[hours?.[h]] || ["on","on"]));
+    return out;
+  };
+
+  // Current Kyiv wall-clock parts
+  const kyivNow = () => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB",{timeZone:TZ,hourCycle:"h23",
+      year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+      .formatToParts(new Date()).map(x=>[x.type,x.value]));
+    return {ymd:`${p.year}-${p.month}-${p.day}`, min: +p.hour*60 + +p.minute + +p.second/60};
+  };
+  const ymdOf = ts => new Intl.DateTimeFormat("en-CA",{timeZone:TZ}).format(new Date(ts*1000));
+  const labelOf = ts => {
+    const d = new Date(ts*1000);
+    return {
+      date: new Intl.DateTimeFormat(t("locale"),{timeZone:TZ,day:"numeric",month:"long"}).format(d),
+      wd: new Intl.DateTimeFormat(t("locale"),{timeZone:TZ,weekday:"long"}).format(d)
+    };
+  };
+  const fmt = m => { m = Math.round(m) % 1440; return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); };
+  const fmtDur = m => { m = Math.max(0, Math.round(m)); return t("dur")(Math.floor(m/60), m%60); };
+  const fmtLeft = m => { m = Math.max(0, Math.round(m)); return `${Math.floor(m/60)}:${String(m%60).padStart(2,"0")}`; };
+  const range = x => `${fmt(x.from)}–${x.to===1440?"24:00":fmt(x.to)}`;
+
+  const groupNum = g => g.replace("GPV","").split(".").map(Number);
+  const sortGroups = gs => gs.sort((a,b)=>{const x=groupNum(a),y=groupNum(b);return x[0]-y[0]||x[1]-y[1];});
+
+  // Days in fact data, sorted, from today on
+  const factDays = () => {
+    const today = kyivNow().ymd;
+    return Object.keys(data.fact.data).map(Number).sort((a,b)=>a-b)
+      .filter(ts => ymdOf(ts) >= today)
+      .map(ts => ({ts, ymd: ymdOf(ts), groups: data.fact.data[ts]}));
+  };
+
+  const intervals = slots => {
+    const res = []; let i = 0;
+    while (i < 48) {
+      const s = slots[i];
+      if (s === "on") { i++; continue; }
+      let j = i; while (j < 48 && slots[j] === s) j++;
+      res.push({kind:s, from:i*30, to:j*30}); i = j;
+    }
+    return res;
+  };
+
+  function populateSelect(){
+    const sel = $("queue");
+    const groups = new Set();
+    for (const d of Object.values(data.fact.data)) Object.keys(d).forEach(g=>groups.add(g));
+    const list = sortGroups([...groups]);
+    const cur = sel.value || fromHash() || store.get("svitlo.queue") || list[0];
+    sel.innerHTML = "";
+    for (const g of list) {
+      const o = document.createElement("option");
+      o.value = g; o.textContent = g.replace("GPV",""); sel.append(o);
+    }
+    sel.value = list.includes(cur) ? cur : list[0];
+  }
+  const fromHash = () => { const m = location.hash.match(/^#q(\d+)-(\d+)$/); return m ? `GPV${m[1]}.${m[2]}` : null; };
+
+  function renderStatus(days, g){
+    const now = kyivNow();
+    const box = $("status");
+    const today = days.length && days[0].ymd === now.ymd ? days[0] : null;
+    drawClock(today ? slotsOf(today.groups[g]) : null, now.min);
+    renderChips(today ? slotsOf(today.groups[g]) : null);
+    if (!today) {
+      box.classList.remove("is-on");
+      $("stateText").textContent = t("noSchedule");
+      $("nextText").textContent = t("notPubToday");
+      return;
+    }
+    // Build a continuous slot timeline: today + following published days
+    const seq = []; days.forEach(d => seq.push(...slotsOf(d.groups[g])));
+    const idx = Math.floor(now.min/30);
+    const cur = seq[idx];
+    const isOn = cur === "on";
+    box.classList.toggle("is-on", isOn);
+    $("stateText").textContent = isOn ? t("stOn") : cur === "maybe" ? t("stMaybe") : t("stOff");
+    let j = idx + 1; while (j < seq.length && seq[j] === cur) j++;
+    const nextEl = $("nextText");
+    if (j >= seq.length) { nextEl.textContent = isOn ? t("noMoreOff") : t("untilEnd"); return; }
+    nextEl.textContent = t("next")(seq[j], j >= 48, fmt(j*30), fmtLeft(j*30 - now.min));
+  }
+
+  // 24-hour dial: 48 half-hour segments, midnight at the top, clockwise
+  function drawClock(slots, nowMin){
+    const svg = $("clockSvg"), NS = "http://www.w3.org/2000/svg";
+    const R = 140, r = 108, gap = 0.012;
+    const pt = (rad, a) => `${(Math.cos(a)*rad).toFixed(2)} ${(Math.sin(a)*rad).toFixed(2)}`;
+    const ang = i => -Math.PI/2 + i/48*2*Math.PI;
+    svg.innerHTML = "";
+    const nowIdx = Math.floor(nowMin/30);
+    for (let i = 0; i < 48; i++) {
+      const a0 = ang(i) + gap, a1 = ang(i+1) - gap;
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", `M${pt(R,a0)} A${R} ${R} 0 0 1 ${pt(R,a1)} L${pt(r,a1)} A${r} ${r} 0 0 0 ${pt(r,a0)}Z`);
+      p.setAttribute("class", `seg-${slots ? slots[i] : "off"}${slots && i < nowIdx ? " seg-past" : ""}`);
+      const tt = document.createElementNS(NS, "title");
+      tt.textContent = range({from:i*30, to:(i+1)*30}); p.append(tt);
+      svg.append(p);
+    }
+    for (const h of [0,3,6,9,12,15,18,21]) {
+      const a = ang(h*2), tx = document.createElementNS(NS, "text");
+      const [x, y] = pt(157, a).split(" ");
+      tx.setAttribute("x", x); tx.setAttribute("y", y); tx.setAttribute("class", "hl");
+      tx.setAttribute("text-anchor", "middle"); tx.setAttribute("dominant-baseline", "central");
+      tx.textContent = String(h).padStart(2,"0"); svg.append(tx);
+    }
+    if (slots) {
+      const a = ang(nowMin/30), hand = document.createElementNS(NS, "line");
+      const [x1, y1] = pt(r-10, a).split(" "), [x2, y2] = pt(R+8, a).split(" ");
+      hand.setAttribute("x1", x1); hand.setAttribute("y1", y1); hand.setAttribute("x2", x2); hand.setAttribute("y2", y2);
+      hand.setAttribute("class", "hand"); svg.append(hand);
+    }
+  }
+
+  function renderChips(slots){
+    const ul = $("todayChips"); ul.innerHTML = "";
+    $("todayTitle").hidden = ul.hidden = !slots;
+    if (!slots) return;
+    const off = slots.filter(s => s === "off").length * 30;
+    $("todayTitle").textContent = off ? t("offToday")(fmtDur(off)) : t("noOffToday");
+    intervals(slots).forEach(x => { const li = document.createElement("li"); if (x.kind === "maybe") li.className = "maybe";
+      li.textContent = range(x) + (x.kind==="maybe" ? ` (${t("maybe")})` : ""); ul.append(li); });
+  }
+
+  function renderDays(days, g){
+    const host = $("days"); host.innerHTML = "";
+    const now = kyivNow();
+    const d = days.find(x => x.ymd !== now.ymd);
+    const sec = document.createElement("section"); sec.className = "day"; host.append(sec);
+    const head = document.createElement("div"); head.className = "day-head";
+    const h2 = document.createElement("h2"); head.append(h2); sec.append(head);
+    if (!d) {
+      h2.textContent = t("tomorrow");
+      const p = document.createElement("p"); p.className = "empty"; p.textContent = t("tomorrowEmpty"); sec.append(p);
+      return;
+    }
+    const {date, wd} = labelOf(d.ts);
+    const slots = slotsOf(d.groups[g]);
+    const iv = intervals(slots);
+    const offMin = slots.filter(s=>s==="off").length*30;
+    h2.textContent = `${t("tomorrow")} · ${wd}, ${date}`;
+    const sum = document.createElement("span"); sum.className = "sum";
+    sum.textContent = offMin ? t("daySum")(fmtDur(offMin), fmtDur(1440-offMin)) : t("noOutages");
+    head.append(sum);
+    const bar = document.createElement("div"); bar.className = "bar"; bar.setAttribute("role","img");
+    bar.setAttribute("aria-label", iv.length ? `${t("outages")}: ` + iv.map(range).join(", ") : t("noOutages"));
+    slots.forEach((s,i) => { const c = document.createElement("div"); c.className = "c-"+s;
+      c.title = range({from:i*30, to:(i+1)*30}); bar.append(c); });
+    const ticks = document.createElement("div"); ticks.className = "ticks";
+    for (let h = 0; h < 24; h++) { const s = document.createElement("span"); s.textContent = String(h).padStart(2,"0"); ticks.append(s); }
+    const ul = document.createElement("ul"); ul.className = "intervals";
+    if (!iv.length) { const li = document.createElement("li"); li.className = "none"; li.textContent = t("allDayOn"); ul.append(li); }
+    iv.forEach(x => { const li = document.createElement("li"); if (x.kind==="maybe") li.className = "maybe";
+      li.textContent = range(x) + (x.kind==="maybe" ? ` (${t("maybe")})` : ""); ul.append(li); });
+    sec.append(bar, ticks, ul);
+  }
+
+  // Two columns (power on / off): every queue gets its own card, sorted by how soon the state changes.
+  function renderAll(days, g){
+    const host = $("allCols");
+    const now = kyivNow();
+    if (!days.length || days[0].ymd !== now.ymd) { host.innerHTML = ""; const p = document.createElement("p"); p.className = "empty"; p.textContent = t("todayNotPub"); host.append(p); return; }
+    const idx = Math.floor(now.min/30);
+    const all = sortGroups(Object.keys(days[0].groups)).map(k => {
+      const seq = []; days.forEach(d => seq.push(...slotsOf(d.groups[k])));
+      return {k, seq, key: seq.join(",")};
+    });
+    const items = all.map(m => {
+      const cur = m.seq[idx]; let j = idx + 1; while (j < m.seq.length && m.seq[j] === cur) j++;
+      return {k: m.k, same: all.filter(o => o.key === m.key && o.k !== m.k).map(o => o.k),
+              on: cur === "on", maybe: cur === "maybe", next: j < m.seq.length ? j : null};
+    }).sort((a,b) => (a.next ?? 1e9) - (b.next ?? 1e9) || groupNum(a.k)[0] - groupNum(b.k)[0]);
+
+    const col = on => {
+      const list = items.filter(i => i.on === on);
+      const box = document.createElement("div"); box.className = "col" + (on ? " on" : "");
+      const h = document.createElement("h3"); h.textContent = on ? t("legendOn") : t("legendOff");
+      const n = document.createElement("span"); n.textContent = t("count")(list.length); h.append(n); box.append(h);
+      const scroller = document.createElement("div"); scroller.className = "col-list"; box.append(scroller);
+      if (!list.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = on ? t("nobody") : t("everyone"); scroller.append(p); }
+      for (const it of list) {
+        const card = document.createElement("button"); card.type = "button"; card.className = "qcard" + (it.k === g ? " sel" : "");
+        const left = document.createElement("div");
+        const b = document.createElement("b"); b.textContent = it.k.replace("GPV","");
+        const others = document.createElement("small"); others.textContent = it.same.length ? `${t("same")} ` + it.same.map(q => q.replace("GPV","")).join(" ") : "";
+        left.append(b, others);
+        const right = document.createElement("div"); right.className = "t";
+        const t1 = document.createElement("span"), t2 = document.createElement("small");
+        if (it.next == null) { t1.textContent = t("untilEnd"); }
+        else {
+          t1.textContent = (on ? t("cardOn") : t("cardOff"))(it.next >= 48, fmt(it.next*30));
+          t2.textContent = t("inT")(fmtLeft(it.next*30 - now.min)) + (it.maybe ? ` · ${t("maybe")}` : "");
+        }
+        right.append(t1, t2);
+        card.append(left, right);
+        card.addEventListener("click", () => { $("queue").value = it.k; onQueue(); window.scrollTo({top:0,behavior:"smooth"}); });
+        scroller.append(card);
+      }
+      return box;
+    };
+    const keep = [...host.querySelectorAll(".col-list")].map(s => s.scrollTop);
+    host.innerHTML = "";
+    host.append(col(true), col(false));
+    // keep the viewer's scroll position across the 30-second refresh; on first render bring their queue into view
+    host.querySelectorAll(".col-list").forEach((s, i) => {
+      if (keep.length) { s.scrollTop = keep[i]; return; }
+      const sel = s.querySelector(".qcard.sel");
+      if (sel) s.scrollTop = sel.offsetTop - s.offsetTop - s.clientHeight/2 + sel.offsetHeight/2;
+    });
+  }
+
+  function renderUpdated(){
+    if (!data) return;
+    const upd = new Date(data.lastUpdated);
+    $("updated").textContent = t("updated")(data.fact.update || "—",
+      new Intl.DateTimeFormat(t("locale"),{timeZone:TZ,hour:"2-digit",minute:"2-digit",day:"numeric",month:"short"}).format(upd));
+  }
+
+  function render(){
+    if (!data) return;
+    const g = $("queue").value;
+    const days = factDays();
+    renderStatus(days, g);
+    renderDays(days, g);
+    renderAll(days, g);
+    renderUpdated();
+  }
+
+  function onQueue(){
+    const g = $("queue").value;
+    store.set("svitlo.queue", g);
+    const [a,b] = groupNum(g);
+    history.replaceState(null, "", `#q${a}-${b}`);
+    render();
+  }
+
+  async function load(){
+    const err = $("error");
+    try {
+      const r = await fetch(SRC + "?t=" + Date.now(), {cache:"no-store"});
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      data = await r.json();
+      err.hidden = true;
+      populateSelect();
+      render();
+    } catch (e) {
+      err.hidden = false;
+      err.textContent = t("loadErr")(e.message);
+      if (!data) $("stateText").textContent = t("noData");
+    }
+  }
+
+  // ---------- Address lookup via api.php (hidden when no proxy is available) ----------
+  const api = async (path, params) => {
+    const r = await fetch("api.php?" + new URLSearchParams({ep:path, ...params}), {cache:"no-store"});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    return j;
+  };
+  const debounce = (fn, ms) => { let tm; return (...a) => { clearTimeout(tm); tm = setTimeout(() => fn(...a), ms); }; };
+
+  function combo(input, list, fetchItems, onPick){
+    let items = [], active = -1, seq = 0;
+    const close = () => { list.hidden = true; input.setAttribute("aria-expanded","false"); active = -1; };
+    const paint = (hint) => {
+      list.innerHTML = "";
+      if (hint) { const li = document.createElement("li"); li.className = "hint"; li.textContent = hint; list.append(li); }
+      items.forEach((it, i) => {
+        const li = document.createElement("li"); li.role = "option"; li.textContent = it.value;
+        li.setAttribute("aria-selected", String(i === active));
+        li.addEventListener("mousedown", e => { e.preventDefault(); pick(i); });
+        list.append(li);
+      });
+      list.hidden = false; input.setAttribute("aria-expanded","true");
+    };
+    const pick = i => { const it = items[i]; if (!it) return; input.value = it.value; close(); onPick(it); };
+    const search = debounce(async () => {
+      const q = input.value.trim(), my = ++seq;
+      if (!q) { items = []; close(); return; }
+      try {
+        const res = await fetchItems(q);
+        if (my !== seq) return;
+        items = res.slice(0, 50); active = -1;
+        paint(items.length ? "" : t("notFound"));
+      } catch (e) { if (my === seq) { items = []; paint(t("searchErr") + e.message); } }
+    }, 250);
+    input.addEventListener("input", search);
+    input.addEventListener("focus", () => { if (input.value.trim()) search(); });
+    input.addEventListener("blur", close);
+    input.addEventListener("keydown", e => {
+      if (list.hidden || !items.length) return;
+      if (e.key === "ArrowDown") { active = (active + 1) % items.length; paint(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { active = (active - 1 + items.length) % items.length; paint(); e.preventDefault(); }
+      else if (e.key === "Enter") { pick(active < 0 ? 0 : active); e.preventDefault(); }
+      else if (e.key === "Escape") close();
+    });
+  }
+
+  let street = null;
+  const msg = $("addrMsg");
+  function showSaved(){
+    try { const a = JSON.parse(store.get("svitlo.addr") || "null");
+      if (a) { const [pre, label, post] = t("yourAddr")(a.label, a.q);
+        msg.innerHTML = ""; msg.append(pre, Object.assign(document.createElement("b"),{textContent:label}), post); }
+    } catch {}
+  }
+  combo($("street"), $("streetList"), q => q.length < 2 ? Promise.resolve([]) : api("streets", {query:q}), it => {
+    street = it; const h = $("house"); h.disabled = false; h.value = ""; h.focus();
+    msg.textContent = t("pickHouse");
+  });
+  combo($("house"), $("houseList"), q => api("houses", {streetId:street.id, query:q}), async it => {
+    msg.textContent = t("searching");
+    try {
+      const g = await api("group", {streetId:street.id, houseId:it.id});
+      if (g.group == null) throw new Error(t("noGroup"));
+      const key = `GPV${g.group}.${g.subgroup ?? 1}`;
+      const label = `${street.value}, ${it.value}`;
+      store.set("svitlo.addr", JSON.stringify({label, q:key.replace("GPV","")}));
+      const sel = $("queue");
+      if ([...sel.options].some(o => o.value === key)) { sel.value = key; onQueue(); showSaved(); }
+      else { msg.textContent = t("notInSchedule")(label, key.replace("GPV","")); }
+    } catch (e) { msg.textContent = t("lookupErr") + e.message; }
+  });
+  $("street").addEventListener("input", () => { street = null; const h = $("house"); h.disabled = true; h.value = ""; });
+
+  let addrOn = false;
+  (async () => {
+    try { const r = await fetch("api.php?ep=ping", {cache:"no-store"}); if (!r.ok) throw 0; await r.json();
+      addrOn = true; $("addr").hidden = false; showSaved();
+    } catch { $("addrOff").hidden = false; }
+  })();
+
+  document.querySelectorAll(".lang button").forEach(b => b.addEventListener("click", () => {
+    lang = b.dataset.lang; store.set("svitlo.lang", lang);
+    applyLang(); render();
+    if (addrOn) { msg.textContent = ""; showSaved(); }
+    if (!$("error").hidden) $("error").textContent = t("loadErr")("—");
+  }));
+
+  applyLang();
+  $("queue").addEventListener("change", onQueue);
+  $("refresh").addEventListener("click", load);
+  window.addEventListener("hashchange", () => { const h = fromHash(); if (h && data) { $("queue").value = h; render(); } });
+  load();
+  setInterval(load, 5*60*1000);   // fresh data every 5 minutes
+  setInterval(render, 30*1000);   // move the "now" marker and countdown
+})();
+</script>
+</body>
+</html>
