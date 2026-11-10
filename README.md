@@ -13,6 +13,10 @@ Live outage schedule for DTEK Kyiv Electric Networks queues, in Ukrainian and En
 
 Це неофіційний сайт. Аварійні відключення тут не відображаються — перевіряйте офіційний сайт ДТЕК.
 
+## Telegram-бот
+
+`bot/bot.py` — бот: пошук черги за адресою, графік на сьогодні й завтра, нагадування за 30 хвилин до відключення та коли опублікують графік на завтра. Лише стандартна бібліотека Python. Токен від @BotFather кладеться в `bot/.env` (див. `bot/.env.example`); `bot/docker-compose.yml` — для QNAP Container Station. Перевірка без Telegram: `python bot/bot.py --test "Хрещатик" 22`.
+
 ## Файли
 
 - `index.html` — увесь сайт (HTML, CSS, JS в одному файлі).

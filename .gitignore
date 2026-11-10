@@ -1,3 +1,5 @@
 styles.html
 styles2.html
 __pycache__/
+bot/.env
+bot/data/

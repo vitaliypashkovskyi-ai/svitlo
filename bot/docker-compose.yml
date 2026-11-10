@@ -1,0 +1,19 @@
+# Світло Київ — Telegram bot for QNAP Container Station.
+# Container Station → Applications → Create → paste this file.
+# The bot only makes outgoing connections (long polling), so no ports are opened.
+services:
+  svitlo-bot:
+    image: python:3.12-alpine
+    container_name: svitlo-bot
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "-u", "bot.py"]
+    volumes:
+      - /share/Pashkovskyi/svitlo-bot:/app
+    environment:
+      - TZ=Europe/Kyiv
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
