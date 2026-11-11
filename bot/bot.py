@@ -79,7 +79,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.7"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.8"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -179,6 +179,7 @@ T = {
         "no_change": "змін до кінця графіка немає",
         "today": "Сьогодні", "tomorrow": "Завтра", "no_outages": "відключень немає", "off_total": "без світла {d}",
         "not_published": "графік ще не опубліковано", "maybe": "можливо",
+        "bar_legend": "▰ = 30 хв без світла", "bar_legend_maybe": ", ▱ = можливе відключення",
         "updated_at": "Оновлено {t}",
         "dur": lambda h, m: f"{h} год {m:02d} хв" if h else f"{m} хв",
         # buttons
@@ -259,6 +260,7 @@ T = {
         "no_change": "no changes until the end of the schedule",
         "today": "Today", "tomorrow": "Tomorrow", "no_outages": "no outages", "off_total": "{d} without power",
         "not_published": "not published yet", "maybe": "possible",
+        "bar_legend": "▰ = 30 min without power", "bar_legend_maybe": ", ▱ = possible outage",
         "updated_at": "Updated {t}",
         "dur": lambda h, m: f"{h} h {m:02d} min" if h else f"{m} min",
         "b_refresh": "🔄 Refresh", "b_site": "🌐 Website", "b_addr": "🏠 Addresses", "b_settings": "⚙️ Settings",
@@ -428,6 +430,18 @@ def fmt_left(m):
     return f"{m // 60}:{m % 60:02d}"
 
 
+BAR_MAX = 16  # blocks that still fit a phone screen next to the times
+
+
+def outage_line(kind, a, b, t):
+    """'06:30–11:30  5:00 ▰▰▰▰▰▰▰▰▰▰' — one block per 30 min; ▱ for a possible outage."""
+    mins = b - a
+    blocks = mins // 30
+    bar = ("▰" if kind == "-" else "▱") * min(blocks, BAR_MAX) + ("…" if blocks > BAR_MAX else "")
+    line = f"{fmt(a)}–{'24:00' if b == 1440 else fmt(b)}  {mins // 60}:{mins % 60:02d} {bar}"
+    return f"<code>{line}</code>" + (f" <i>{t['maybe']}</i>" if kind == "?" else "")
+
+
 def intervals(s):
     res, i = [], 0
     while i < 48:
@@ -467,7 +481,7 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
     days = days_from_today(data, now)
     key = queue_key(queue)
     head = f"<b>{t['title'].format(q=queue)}</b>"
-    if label and label != T[lang]["queue_label"].format(q=queue):
+    if label and label not in (T["uk"]["queue_label"].format(q=queue), T["en"]["queue_label"].format(q=queue)):
         head += f" · {html.escape(label)}"
     if region != "kyiv":
         head += f"\n<i>{region_name(region, lang)}</i>"
@@ -489,7 +503,10 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
         else:
             state += " — " + t["no_change"]
         lines += [state, ""]
-    for name, day in ((t["today"], today), (t["tomorrow"], next((d for d in days if d[0] > now), None))):
+    bars_shown = maybe_shown = False
+    for n, (name, day) in enumerate(((t["today"], today), (t["tomorrow"], next((d for d in days if d[0] > now), None)))):
+        if n:
+            lines.append("")
         if not day:
             lines.append(f"<b>{name}:</b> {t['not_published']}")
             continue
@@ -498,8 +515,11 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
         off = s.count("-") * 30
         lines.append(f"<b>{name}:</b> " + (t["off_total"].format(d=t["dur"](off // 60, off % 60)) if iv else t["no_outages"]))
         for kind, a, b in iv:
-            lines.append(f"  {'▪️' if kind == '-' else '▫️'} {fmt(a)}–{'24:00' if b == 1440 else fmt(b)}"
-                         + (f" ({t['maybe']})" if kind == "?" else ""))
+            lines.append(outage_line(kind, a, b, t))
+            bars_shown = True
+            maybe_shown |= kind == "?"
+    if bars_shown:
+        lines.append(f"<i>{t['bar_legend']}{t['bar_legend_maybe'] if maybe_shown else ''}</i>")
     if today:
         lines += ["", f"<i>{t['updated_at'].format(t=fmt((now - today[0]) / 60))}</i>"]
     return "\n".join(lines)
