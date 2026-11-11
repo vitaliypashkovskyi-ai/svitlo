@@ -46,6 +46,22 @@ TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(HERE, "data"))
 SITE_URL = os.environ.get("SITE_URL", "").strip()  # the public site was taken down on 2026-11-11
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "LightUkraine_bot").strip().lstrip("@")  # refreshed from getMe at start
+
+
+def deep_link(region, queue):
+    """t.me link that opens the bot on a queue: ?start=q4_1 (Kyiv), ?start=odesa_q3_2 (other regions)."""
+    a, b = queue.split(".")
+    return f"https://t.me/{BOT_USERNAME}?start={'' if region == 'kyiv' else region + '_'}q{a}_{b}"
+
+
+def parse_start(param):
+    """'q4_1' -> ('kyiv', '4.1'); 'kyiv-region_q2_1' -> ('kyiv-region', '2.1'); anything else -> None."""
+    import re
+    m = re.fullmatch(r"(?:([a-z-]+)_)?q(\d{1,2})_(\d)", param or "")
+    if not m or (m.group(1) and m.group(1) not in REGIONS):
+        return None
+    return (m.group(1) or "kyiv"), f"{m.group(2)}.{m.group(3)}"
 DATA_BASE = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/"
 YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
 # Regions with DTEK schedules. yasno: (regionId, dsoId) for address search; cities: search asks for the town first.
@@ -91,7 +107,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.14"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.15"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -199,6 +215,9 @@ T = {
         # buttons
         "b_refresh": "🔄 Оновити", "b_site": "🌐 Сайт", "b_addr": "🏠 Адреси", "b_settings": "⚙️ Налаштування",
         "b_rep_off": "⚡ У мене немає світла", "b_rep_on": "💡 Світло є",
+        "b_share": "📤 Поділитися",
+        "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
+        "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
         "b_dtek": "📞 Повідомити ДТЕК", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
         "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
         "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
@@ -291,6 +310,9 @@ T = {
         "dur": lambda h, m: f"{h} h {m:02d} min" if h else f"{m} min",
         "b_refresh": "🔄 Refresh", "b_site": "🌐 Website", "b_addr": "🏠 Addresses", "b_settings": "⚙️ Settings",
         "b_rep_off": "⚡ No power here", "b_rep_on": "💡 Power is on",
+        "b_share": "📤 Share",
+        "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
+        "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
         "b_dtek": "📞 Report to DTEK", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
         "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
         "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
@@ -697,6 +719,12 @@ class Bot:
             raise
 
     # ---------- views
+    def share_url(self, u, a):
+        """Telegram's share sheet with a ready message and a link that opens the bot on this queue."""
+        t = T[u["lang"]]
+        text = t["share_text"].format(q=a["queue"], r=region_name(a["region"], u["lang"]))
+        return "https://t.me/share/url?" + urllib.parse.urlencode({"url": deep_link(a["region"], a["queue"]), "text": text})
+
     def status_view(self, u, now=None):
         a = self.active_address(u)
         t = T[u["lang"]]
@@ -704,7 +732,7 @@ class Bot:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
                    [{"text": t["b_dtek"], "callback_data": "dtek"}],
-                   [{"text": t["b_refresh"], "callback_data": "r"}]
+                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_share"], "url": self.share_url(u, a)}]
                    + ([{"text": t["b_site"], "url": site_link(a["region"], a["queue"])}] if SITE_URL else []),
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
         text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
@@ -951,7 +979,23 @@ class Bot:
         cmd, _, arg = m.partition(" ")
         cmd = cmd.split("@")[0].lower()
         arg = arg.strip()
-        if cmd == "/start":
+        if cmd == "/start" and parse_start(arg):
+            region, q = parse_start(arg)
+            data = schedule(region)
+            days = days_from_today(data, time.time()) if data else []
+            if days and queue_key(q) in days[0][1]:
+                label = T[u["lang"]]["queue_label"].format(q=q)
+                if not self.db.one("SELECT 1 FROM addresses WHERE chat_id=? AND region=? AND queue=?", (chat_id, region, q)):
+                    if self.add_address(chat_id, label, q, region):
+                        self.tg.send(chat_id, t["deep_added"].format(q=q, r=region_name(region, u["lang"])))
+                else:
+                    aid = self.db.one("SELECT id FROM addresses WHERE chat_id=? AND region=? AND queue=?", (chat_id, region, q))["id"]
+                    self.set_user(chat_id, active=aid)
+                self.set_user(chat_id, region=region)
+                self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
+            else:
+                self.tg.send(chat_id, t["welcome"], self.list_button(u))
+        elif cmd == "/start":
             if self.active_address(u):
                 self.tg.send(chat_id, *self.status_view(u))
             else:
@@ -1444,6 +1488,8 @@ class Bot:
     # ---------- main loop
     def run(self):
         me = self.tg.call("getMe")["result"]
+        global BOT_USERNAME
+        BOT_USERNAME = me["username"]
         log(f"Bot @{me['username']} started, version {BOT_VERSION}, auto-update {'on' if AUTO_UPDATE else 'off'}")
         for lang in ("uk", "en"):
             try:
@@ -1651,7 +1697,7 @@ def self_test():
     print("     " + tg.out[-1][2].replace("\n", " / ")[:300] if tg.out else "")
     ADMIN_CHAT_ID = saved_admin
     if STREETS:
-        step("list: letters", lambda: cb("L"), lambda s: "літеру" in s)
+        step("list: start (districts if known, else letters)", lambda: cb("L"), lambda s: ("район" in s) if DISTRICTS else ("літеру" in s))
         print("     letters:", "".join(btns()))
         gong = next(i for i, x in enumerate(STREETS["Г"]) if x[0] == "Гонгадзе Георгія")
         page = gong // PAGE + 1
@@ -1752,6 +1798,15 @@ def self_test():
         bot.db.q("DELETE FROM addresses WHERE chat_id=?", (C,))
         step(f"picked '{picked}' -> houses for that street", lambda: bot.text(C, picked),
              lambda s: picked.lstrip("📍 ") in s and bot.state(bot.user(C)).get("street", {}).get("name") == picked.lstrip("📍 "))
+
+    # links that open a queue, and the share button
+    step("link ?start=q4_1 opens queue 4.1", lambda: bot.text(5151, "/start q4_1", "uk"), lambda s: "Черга 4.1" in s)
+    share = [b.get("url", "") for r in tg.out[-1][3] for b in r if b["text"].startswith("📤")]
+    share_ok = bool(share) and share[0].startswith("https://t.me/share/url?") and "start%3Dq4_1" in share[0]
+    step("share button has a ready link", lambda: tg.out.append(("send", 5151, "OK" if share_ok else "BAD " + str(share), None)),
+         lambda s: s == "OK")
+    step("link ?start=odesa_q3_2 opens Odesa 3.2", lambda: bot.text(5151, "/start odesa_q3_2", "uk"), lambda s: "Черга 3.2" in s)
+    step("bad link -> normal welcome", lambda: bot.text(5252, "/start evil_q1_1", "uk"), lambda s: "Привіт" in s)
 
     # people's reports: two people in Kyiv queue 4.1 say "no power" while the schedule says it's on
     seq41 = slots(days[0][1].get("GPV4.1"))
