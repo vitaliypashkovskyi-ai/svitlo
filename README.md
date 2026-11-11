@@ -19,7 +19,9 @@ Live outage schedule for DTEK Kyiv Electric Networks queues, in Ukrainian and En
 
 ## Telegram-бот
 
-`bot/bot.py` — бот: пошук черги за адресою, графік на сьогодні й завтра, нагадування за 30 хвилин до відключення та коли опублікують графік на завтра. Лише стандартна бібліотека Python. Токен від @BotFather кладеться в `bot/.env` (див. `bot/.env.example`); `bot/docker-compose.yml` — для QNAP Container Station. Перевірка без Telegram: `python bot/bot.py --test "Хрещатик" 22`.
+`bot/bot.py` — бот: пошук черги за адресою, графік на сьогодні й завтра, нагадування за 30 хвилин до відключення та коли опублікують графік на завтра. Лише стандартна бібліотека Python. Токен від @BotFather кладеться в `bot/.env` (див. `bot/.env.example`); `bot/docker-compose.yml` — для QNAP Container Station. Перевірка без Telegram: `python bot/bot.py --test`.
+
+Автооновлення: раз на годину бот порівнює `bot/bot.py` і `bot/streets.json` з цим репозиторієм. Нову версію він спершу перевіряє власною самоперевіркою в тимчасовій папці й лише тоді замінює файли та перезапускається (контейнер піднімається сам). Версія, що не пройшла перевірку, не встановлюється. Вимкнути: `AUTO_UPDATE=0` у `bot/.env`.
 
 ## Файли
 

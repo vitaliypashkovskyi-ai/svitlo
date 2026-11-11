@@ -68,6 +68,12 @@ QUIET_FROM, QUIET_TO = 23 * 60, 7 * 60
 RETURN_WINDOW = 10            # "power is back" message within 10 min after the scheduled time
 CACHE_TTL = {"cities": 7 * 86400, "streets": 86400, "houses": 7 * 86400, "group": 7 * 86400}
 SEND_RATE = 25                # messages per second, below Telegram's ~30/s limit
+# Self-update: once an hour the bot compares these files with the GitHub repo, runs the new
+# version's self-test and only then switches to it. AUTO_UPDATE=0 in .env turns it off.
+AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
+UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
+UPDATE_FILES = ("bot.py", "streets.json")
+UPDATE_EVERY = 3600
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1032,6 +1038,8 @@ class Bot:
             except Exception as e:
                 log("setMyCommands failed:", e)
         threading.Thread(target=self.notifier, daemon=True).start()
+        if AUTO_UPDATE:
+            threading.Thread(target=self.updater, daemon=True).start()
         pool = ThreadPoolExecutor(max_workers=8)  # a slow YASNO answer never blocks other people
         offset = 0
         while True:
@@ -1050,6 +1058,89 @@ class Bot:
         while True:
             self.safe(self.notify_tick)
             time.sleep(60 - time.time() % 60 + 1)  # once a minute, just after :00
+
+    # ---------- self-update from the GitHub repo
+    def updater(self):
+        time.sleep(120)  # let the bot settle after a start
+        while True:
+            self.safe(self.check_update)
+            time.sleep(UPDATE_EVERY)
+
+    def admin(self, text):
+        if ADMIN_CHAT_ID:
+            self.tg.send(int(ADMIN_CHAT_ID), text)
+
+    def check_update(self):
+        """Download bot.py and streets.json from GitHub; if they changed, run the new code's
+        self-test in a temporary folder and only then replace the files. A new bot.py makes the
+        process exit, and the container's restart policy starts it again on the new version."""
+        import hashlib
+        import subprocess
+        import tempfile
+        sha = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
+        new = {}
+        for name in UPDATE_FILES:
+            try:
+                url = UPDATE_URL + name + (f"?t={int(time.time())}" if UPDATE_URL.startswith("http") else "")
+                req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/updater"})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    new[name] = r.read()
+            except Exception as e:
+                log("update check failed:", name, e)
+                return
+        local = {}
+        for name in UPDATE_FILES:
+            try:
+                with open(os.path.join(HERE, name), "rb") as f:
+                    local[name] = f.read()
+            except FileNotFoundError:
+                local[name] = b""
+        changed = [n for n in UPDATE_FILES if sha(new[n]) != sha(local[n])]
+        if not changed:
+            return
+        version = sha(b"".join(new[n] for n in UPDATE_FILES))[:10]
+        state_file = os.path.join(DATA_DIR, "update_state.json")
+        try:
+            with open(state_file, encoding="utf-8") as f:
+                state = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            state = {}
+        if version in state.get("failed", []):
+            return  # this version already failed its self-test; wait for the next one
+        log("update found:", ", ".join(changed), version)
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in UPDATE_FILES:
+                with open(os.path.join(tmp, name), "wb") as f:
+                    f.write(new[name])
+            env = {**os.environ, "BOT_TOKEN": "", "ADMIN_CHAT_ID": "", "DATA_DIR": os.path.join(tmp, "data"),
+                   "STREETS_FILE": os.path.join(tmp, "streets.json")}
+            try:
+                res = subprocess.run([sys.executable, "-X", "utf8", os.path.join(tmp, "bot.py"), "--test"], cwd=tmp, env=env,
+                                     capture_output=True, text=True, timeout=900)
+                passed = res.returncode == 0
+                tail = (res.stdout + res.stderr)[-600:]
+            except Exception as e:
+                passed, tail = False, repr(e)
+            if not passed:
+                state.setdefault("failed", []).append(version)
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(state_file, "w", encoding="utf-8") as f:
+                    json.dump(state, f)
+                log("update rejected, self-test failed:\n" + tail)
+                self.admin(f"❌ Оновлення бота {version} не пройшло самоперевірку — працює попередня версія.\n<pre>{html.escape(tail[-400:])}</pre>")
+                return
+            for name in changed:
+                dst = os.path.join(HERE, name)
+                if os.path.exists(dst):
+                    os.replace(dst, dst + ".bak")
+                os.replace(os.path.join(tmp, name), dst)
+        log("updated:", ", ".join(changed), version)
+        self.admin(f"🔄 Бот оновлено ({', '.join(changed)}, версія {version}).")
+        if "bot.py" in changed:
+            log("restarting on the new version")
+            os._exit(0)  # docker 'restart: unless-stopped' starts the new code
+        global STREETS, STREET_BY_ID
+        STREETS, STREET_BY_ID = load_streets()
 
     @staticmethod
     def safe(fn, *a):
