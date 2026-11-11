@@ -118,7 +118,7 @@ REGIONS = {
     "kirovohrad": {"uk": "Кіровоградська область", "en": "Kirovohrad region", "yasno": None, "cities": False, "source": "kr",
                    "dtek": "https://kiroe.com.ua/energy/emergency", "co": {"uk": "Кіровоградобленерго", "en": "Kirovohradoblenergo"},
                    "phones": ["0 800 501 148"], "tg": None, "viber": None, "city": None},
-    "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe",
+    "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe", "lookup": "voe",
               "dtek": "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
               "co": {"uk": "Волиньобленерго", "en": "Volynoblenergo"},
               "phones": ["(0332) 78-48-48", "(068) 478-48-48", "(095) 478-48-48"], "tg": None, "viber": None, "city": None},
@@ -149,7 +149,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.2"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.3"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -305,6 +305,10 @@ T = {
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
+        "voe_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть населений пункт і вулицю через кому, наприклад <b>Луцьк, Волі</b>.",
+        "voe_ask_street": "Населений пункт: <b>{city}</b>. Тепер напишіть назву вулиці, наприклад <b>Шевченка</b>.",
+        "voe_not_in": "🟢 Будинок {h}: за даними {co} він <b>не залучений</b> до графіків погодинних відключень — за графіком світло тут не вимикають.\n<i>Аварійні відключення все одно можливі.</i>",
+        "voe_none": "{co} не знайшло вулицю «{street}» у «{city}». Перевірте назву (без «вул.», повністю) або виберіть чергу кнопками.",
         "b_by_address": "🔎 Знайти чергу за адресою", "mk_filial": "Виберіть дільницю Миколаївобленерго.\n<i>Місто Миколаїв — «Миколаївський РЕМ».</i>",
         "pl_filial": "Виберіть філію або дільницю Полтаваобленерго.\n<i>Місто Полтава — «Полтавська об’єднана філія».</i>",
         "mk_level": {"ns": "Виберіть населений пункт", "street": "Виберіть вулицю"},
@@ -416,6 +420,10 @@ T = {
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
+        "voe_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town and street in Ukrainian, separated by a comma, e.g. <b>Луцьк, Волі</b>.",
+        "voe_ask_street": "Town: <b>{city}</b>. Now type the street name in Ukrainian, e.g. <b>Шевченка</b>.",
+        "voe_not_in": "🟢 House {h}: {co} says it is <b>not included</b> in the hourly outage schedules, so the power isn't cut here by schedule.\n<i>Emergency outages are still possible.</i>",
+        "voe_none": "{co} found no street «{street}» in «{city}». Check the name (full, without «вул.») or pick the queue with the buttons.",
         "b_by_address": "🔎 Find the queue by address", "mk_filial": "Pick the Mykolaivoblenergo district office.\n<i>Mykolaiv city is «Миколаївський РЕМ».</i>",
         "pl_filial": "Pick the Poltavaoblenergo branch or district office.\n<i>Poltava city is «Полтавська об’єднана філія».</i>",
         "mk_level": {"ns": "Pick the town or village", "street": "Pick the street"},
@@ -1553,7 +1561,7 @@ class Bot:
         if R.get("lookup") in ("mk", "pl"):
             rows.insert(0, [{"text": t["b_by_address"], "callback_data": "MK"}])
             return text, rows
-        return text + (t["lookup_hint"] if R.get("lookup") else ""), rows
+        return text + (t["voe_hint"] if R.get("lookup") == "voe" else t["lookup_hint"] if R.get("lookup") else ""), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
     def dnipro_buttons(self, u):
@@ -1871,6 +1879,8 @@ class Bot:
                 hit = next((k for k, v in st.get("houses", {}).items() if v.lower() == m.strip().lower()), None)
                 return self.pick_house(chat_id, u, hit) if hit else self.tg.send(chat_id, T[u["lang"]]["no_houses"].format(q=html.escape(m)))
             return self.tg.send(chat_id, *self.mk_level_view(u, query=m))
+        if R.get("lookup") == "voe":
+            return self.voe_text(chat_id, u, m)
         if R.get("lookup") == "loe":
             if st.get("street"):
                 return self.loe_house_text(chat_id, u, m)
@@ -2051,6 +2061,100 @@ class Bot:
             self.tg.edit(chat_id, message_id, t["addr_saved"].format(label=html.escape(label), q=q))
         return self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
 
+    # ---------- Volynoblenergo: the 'queue by address' form on energy.volyn.ua (town + street -> houses with their queue)
+    def voe_rows(self, city, street):
+        key = f"voe:addr:{city.lower()}:{street.lower()}"
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < 86400:
+            return json.loads(row["value"])
+        try:
+            page = oe_page("https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/cherga/",
+                           urllib.parse.urlencode({"formCity": city, "formStreet": street}).encode())
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+        out = []
+        for table in _re.findall(r"<table.*?</table>", page, _re.S):
+            for tr in _re.findall(r"<tr.*?</tr>", table, _re.S):
+                cells = [html_text(c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", tr, _re.S)]
+                if len(cells) >= 5 and cells[1] != "Нас. пункт" and not cells[4].startswith("Черга"):
+                    out.append(cells[1:5])  # town, street, houses '1, 1А, 3', queue '1.2' or 'Не залучено'
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(out, ensure_ascii=False), int(time.time())))
+        return out
+
+    def voe_text(self, chat_id, u, m):
+        st = self.state(u)
+        m = m.strip()
+        if st.get("street") and "," not in m and any(ch.isdigit() for ch in m):
+            hit = next((k for k, v in st.get("houses", {}).items() if v.lower().replace(" ", "") == m.lower().replace(" ", "")), None)
+            return self.pick_house(chat_id, u, hit) if hit else self.tg.send(chat_id, T[u["lang"]]["no_houses"].format(q=html.escape(m)))
+        if "," in m:
+            city, street = (x.strip() for x in m.split(",", 1))
+        elif st.get("voe_city"):
+            city, street = st["voe_city"], m
+        else:
+            self.set_state(chat_id, {"voe_city": m[:60]})
+            return self.tg.send(chat_id, T[u["lang"]]["voe_ask_street"].format(city=html.escape(m[:60])))
+        return self.voe_search(chat_id, u, city[:60], street[:60])
+
+    def voe_search(self, chat_id, u, city, street):
+        t = T[u["lang"]]
+        co = REGIONS[u["region"]]["co"][u["lang"]]
+        for pre in ("вулиця ", "вул. ", "вул ", "м. ", "с. ", "смт "):  # the form wants bare names
+            street = street[len(pre):] if street.lower().startswith(pre) else street
+            city = city[len(pre):] if city.lower().startswith(pre) else city
+        if len(city) < 2 or len(street) < 2:
+            return self.tg.send(chat_id, t["short"])
+        try:
+            rows = self.voe_rows(city, street)
+        except Exception:
+            return self.tg.send(chat_id, t["loe_busy"].format(co=co))
+        combos = {}
+        for town, name, houses, queue in rows:
+            hs = combos.setdefault(f"{town}|{name}", {})
+            for h in houses.split(","):
+                h = h.strip()[:20]
+                if h and any(ch.isdigit() for ch in h) and not h.startswith("-"):
+                    hs.setdefault(h, []).append(queue.strip())
+        if not combos:
+            self.set_state(chat_id, {"voe_city": city})
+            return self.tg.send(chat_id, t["voe_none"].format(co=co, city=html.escape(city), street=html.escape(street)))
+        items = sorted(combos.items(), key=lambda kv: (kv[0].split("|")[1].lower() != street.lower(), ua_key(kv[0])))[:30]
+        self.set_state(chat_id, {"voe_city": city, "voe_combos": [[k, v] for k, v in items]})
+        exact = [i for i, (k, _) in enumerate(items) if k.split("|")[1].lower() == street.lower()]
+        if len(items) == 1 or len(exact) == 1:
+            return self.voe_pick(chat_id, self.user(chat_id), str(exact[0] if exact else 0))
+        return self.tg.send(chat_id, t["pick_street"], [[{"text": f"{k.split('|')[1]} — {k.split('|')[0]}"[:60], "callback_data": f"s:{i}"}]
+                                                        for i, (k, _) in enumerate(items)])
+
+    def voe_pick(self, chat_id, u, idx, message_id=None):
+        st = self.state(u)
+        combos = st.get("voe_combos") or []
+        if not idx.isdigit() or int(idx) >= len(combos):
+            return
+        key, houses = combos[int(idx)]
+        town, name = key.split("|", 1)
+
+        def best(vals):  # a house can sit on several lines: a schedule queue wins over 'not included'
+            std = [v for v in vals if v in STANDARD_GROUPS]
+            return max(set(std), key=std.count) if std else (vals[0] if vals else "")
+
+        def natural(h):
+            n = ""
+            for ch in h:
+                if not ch.isdigit():
+                    break
+                n += ch
+            return (int(n) if n else 10 ** 9, h)
+        order = sorted(houses, key=natural)
+        self.set_state(chat_id, {"voe_city": st.get("voe_city"), "voe_combos": combos,
+                                 "city": {"id": town, "name": town}, "street": {"id": idx, "name": name},
+                                 "houses": {str(i): h for i, h in enumerate(order)}, "house_order": [str(i) for i in range(len(order))],
+                                 "loe_q": {str(i): best(houses[h]) for i, h in enumerate(order)}})
+        view = self.houses_view(self.user(chat_id), 1)
+        return self.tg.edit(chat_id, message_id, *view) if message_id else self.tg.send(chat_id, *view)
+
     # ---------- Lvivoblenergo directory (power-api.loe.lviv.ua): town -> street -> buildings with their queue
     def loe_get(self, path, **params):
         q = urllib.parse.urlencode({"pagination": "false", **params})
@@ -2214,6 +2318,8 @@ class Bot:
     def pick_street(self, chat_id, u, sid, message_id=None):
         if REGIONS[u["region"]].get("lookup") == "loe":
             return self.loe_pick_street(chat_id, u, sid, message_id)
+        if REGIONS[u["region"]].get("lookup") == "voe":
+            return self.voe_pick(chat_id, u, sid, message_id)
         t = T[u["lang"]]
         st = self.state(u)
         name = st.get("streets", {}).get(sid)
@@ -2354,9 +2460,11 @@ class Bot:
             return
         if REGIONS[u["region"]].get("lookup") in ("mk", "pl"):
             return self.mk_house(chat_id, u, hid, message_id)
-        if REGIONS[u["region"]].get("lookup") == "loe":
+        if REGIONS[u["region"]].get("lookup") in ("loe", "voe"):
             value = st.get("loe_q", {}).get(hid, "")
             co = REGIONS[u["region"]]["co"][u["lang"]]
+            if value.lower().startswith("не залуч"):
+                return self.tg.send(chat_id, t["voe_not_in"].format(h=html.escape(house), co=co))
             if value not in STANDARD_GROUPS:
                 return self.tg.send(chat_id, t["loe_no_queue"].format(h=html.escape(house), co=co, v=html.escape(value or "—")),
                                     self.queue_pick_view(u)[1])
@@ -3123,6 +3231,15 @@ def self_test():
             h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
             if h1:
                 step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
+
+    # Volyn region: energy.volyn.ua 'queue by address' form, town + street -> houses -> queue
+    VO = 7950
+    bot.user(VO, "uk")
+    bot.set_user(VO, region="volyn")
+    step("Volyn: queue picker explains the address search", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": VO}, "message_id": 7}, "data": "rg:volyn"}),
+         lambda s: any("Луцьк, Волі" in o[2] for o in tg.out))
+    step("Volyn: 'Луцьк, Волі' -> houses", lambda: bot.text(VO, "Луцьк, Волі"), lambda s: "Волі" in s and "будин" in s)
+    step("Volyn: house 11 -> queue 4.2", lambda: bot.text(VO, "11"), lambda s: "Черга 4.2" in s and "Луцьк, Волі, 11" in s)
 
     # Poltava region: Poltavaoblenergo's directory, branch -> town -> street -> house
     P = 7900
