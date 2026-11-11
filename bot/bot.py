@@ -90,7 +90,7 @@ REGIONS = {
     "lviv": {"uk": "Львівська область", "en": "Lviv region", "yasno": None, "cities": False, "source": "loe", "lookup": "loe",
              "dtek": "https://poweron.loe.lviv.ua", "co": {"uk": "Львівобленерго", "en": "Lvivoblenergo"},
              "phones": [], "tg": None, "viber": None, "city": None},
-    "mykolaiv": {"uk": "Миколаївська область", "en": "Mykolaiv region", "yasno": None, "cities": False, "source": "mk",
+    "mykolaiv": {"uk": "Миколаївська область", "en": "Mykolaiv region", "yasno": None, "cities": False, "source": "mk", "lookup": "mk",
                  "dtek": "https://off.energy.mk.ua", "co": {"uk": "Миколаївобленерго", "en": "Mykolaivoblenergo"},
                  "phones": [], "tg": None, "viber": None, "city": None},
     "ivano-frankivsk": {"uk": "Івано-Франківська область", "en": "Ivano-Frankivsk region", "yasno": None, "cities": False,
@@ -123,7 +123,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.19"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.20"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -279,6 +279,9 @@ T = {
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
+        "b_by_address": "🔎 Знайти чергу за адресою", "mk_filial": "Виберіть дільницю Миколаївобленерго.\n<i>Місто Миколаїв — «Миколаївський РЕМ».</i>",
+        "mk_level": {"ns": "Виберіть населений пункт", "street": "Виберіть вулицю"},
+        "mk_letters": "{what}: виберіть першу літеру або напишіть назву.", "mk_page": "{what} · {p}/{n}", "b_back_level": "⬅️ Назад",
         "loe_no_queue": "Для будинку {h} {co} не вказує черги графіка ({v}). Виберіть чергу кнопками або перевірте на сайті {co}.",
         "loe_busy": "Довідник адрес {co} зараз не відповідає. Спробуйте за хвилину або виберіть чергу кнопками.", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
         "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
@@ -386,6 +389,9 @@ T = {
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
+        "b_by_address": "🔎 Find the queue by address", "mk_filial": "Pick the Mykolaivoblenergo district office.\n<i>Mykolaiv city is «Миколаївський РЕМ».</i>",
+        "mk_level": {"ns": "Pick the town or village", "street": "Pick the street"},
+        "mk_letters": "{what}: pick the first letter or type the name.", "mk_page": "{what} · {p}/{n}", "b_back_level": "⬅️ Back",
         "loe_no_queue": "{co} lists no schedule queue for house {h} ({v}). Pick the queue with the buttons or check on the {co} website.",
         "loe_busy": "The {co} address directory isn't responding. Try again in a minute or pick the queue with the buttons.", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
         "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
@@ -1130,6 +1136,9 @@ class Bot:
         rows += [btns[i:i + 4] for i in range(0, len(btns), 4)]
         rows.append([{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
         text = t["queue_pick"].format(r=region_name(u["region"], u["lang"]), co=co, bot=t["or_bot"] if R.get("tg") else "")
+        if R.get("lookup") == "mk":
+            rows.insert(0, [{"text": t["b_by_address"], "callback_data": "MK"}])
+            return text, rows
         return text + (t["lookup_hint"] if R.get("lookup") else ""), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
@@ -1443,6 +1452,11 @@ class Bot:
         """Plain text: a house number, a street name or (in regions with towns) a town name."""
         st = self.state(u)
         R = REGIONS[u["region"]]
+        if R.get("lookup") == "mk" and st.get("mk"):
+            if st.get("street"):
+                hit = next((k for k, v in st.get("houses", {}).items() if v.lower() == m.strip().lower()), None)
+                return self.pick_house(chat_id, u, hit) if hit else self.tg.send(chat_id, T[u["lang"]]["no_houses"].format(q=html.escape(m)))
+            return self.tg.send(chat_id, *self.mk_level_view(u, query=m))
         if R.get("lookup") == "loe":
             if st.get("street"):
                 return self.loe_house_text(chat_id, u, m)
@@ -1456,6 +1470,108 @@ class Bot:
         if R["cities"] and not st.get("city"):
             return self.search_cities(chat_id, u, m)
         return self.search_streets(chat_id, u, m)
+
+    # ---------- Mykolaivoblenergo directory (off.energy.mk.ua): дільниця -> town -> street -> house -> queue
+    def mk_get(self, path):
+        key = "mk:" + path
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < 7 * 86400 and "outage-queue" not in path:
+            return json.loads(row["value"])
+        try:
+            val = http_json("https://off.energy.mk.ua/api" + path, timeout=30)
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(val, ensure_ascii=False), int(time.time())))
+        return val
+
+    def mk_filials_view(self, u):
+        t = T[u["lang"]]
+        items = sorted(((str(x["idfilial"]), x["fullname"]) for x in self.mk_get("/addr/filii") if x.get("idfilial")),
+                       key=lambda x: (not x[1].startswith("Миколаївський"), ua_key(x[1])))
+        btns = [{"text": n[:40], "callback_data": f"MKF:{i}"} for i, n in items]
+        return t["mk_filial"], [btns[i:i + 2] for i in range(0, len(btns), 2)]
+
+    def mk_set_level(self, chat_id, level, items, path):
+        self.set_state(chat_id, {"mk": {"level": level, "items": items, "path": path}})
+
+    def mk_level_view(self, u, letter=None, page=1, query=None):
+        """The current list (towns or streets): letters if it's long, else (or after a letter/text) paged buttons."""
+        t = T[u["lang"]]
+        mk = self.state(u)["mk"]
+        items, what = mk["items"], t["mk_level"][mk["level"]]
+        if query:
+            ql = query.lower().strip()
+            sel = [x for x in items if ql in x[1].lower()]
+            sel.sort(key=lambda x: (not street_main(x[1]).lower().startswith(ql), ua_key(street_main(x[1]))))
+            letter = "?"
+        elif letter:
+            sel = [x for x in items if street_main(x[1])[:1].upper() == letter]
+        elif len(items) > 30:
+            letters = sorted({street_main(x[1])[:1].upper() for x in items} & set(LETTERS), key=LETTERS.index)
+            rows = [[{"text": l, "callback_data": f"MKL:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
+            rows.append([{"text": t["b_back_level"], "callback_data": "MK"}])
+            return t["mk_letters"].format(what=what), rows
+        else:
+            sel = sorted(items, key=lambda x: ua_key(street_main(x[1])))
+        pages = max(1, (len(sel) + PAGE - 1) // PAGE)
+        page = min(max(1, page), pages)
+        rows = [[{"text": n[:60], "callback_data": f"MKI:{i}"}] for i, n in sel[(page - 1) * PAGE: page * PAGE]]
+        if pages > 1 and letter != "?":
+            nav = ([{"text": "◀️", "callback_data": f"MKL:{letter or '-'}:{page - 1}"}] if page > 1 else []) + \
+                  [{"text": f"{page}/{pages}", "callback_data": "x"}] + \
+                  ([{"text": "▶️", "callback_data": f"MKL:{letter or '-'}:{page + 1}"}] if page < pages else [])
+            rows.append(nav)
+        rows.append([{"text": t["b_back_level"], "callback_data": "MKB"}])
+        return t["mk_page"].format(what=what, p=page, n=pages), rows
+
+    def mk_pick(self, chat_id, u, item_id, message_id):
+        mk = self.state(u).get("mk") or {}
+        name = dict((i, n) for i, n in mk.get("items", [])).get(item_id)
+        if not name:
+            return
+        path = {**mk.get("path", {})}
+        if mk["level"] == "ns":
+            path["ns"] = {"id": item_id, "name": name}
+            items = [[str(x["idstreet"]), x["nazstreet"]] for x in self.mk_get(f"/addr/ns/{item_id}/street") if x.get("idstreet")]
+            self.mk_set_level(chat_id, "street", items, path)
+            return self.tg.edit(chat_id, message_id, *self.mk_level_view(self.user(chat_id)))
+        # a street: its houses as buttons
+        houses = [(str(x["iddom"]), str(x["nazdom"]).strip()) for x in self.mk_get(f"/addr/street/{item_id}/dom") if x.get("iddom")]
+
+        def natural(h):
+            n = ""
+            for ch in h[1]:
+                if not ch.isdigit():
+                    break
+                n += ch
+            return (int(n) if n else 10 ** 9, h[1])
+        houses.sort(key=natural)
+        self.set_state(chat_id, {"mk": {**mk, "path": path}, "street": {"id": item_id, "name": name},
+                                 "houses": dict(houses), "house_order": [h for h, _ in houses]})
+        return self.tg.edit(chat_id, message_id, *self.houses_view(self.user(chat_id), 1))
+
+    def mk_house(self, chat_id, u, hid, message_id):
+        t = T[u["lang"]]
+        st = self.state(u)
+        house = st.get("houses", {}).get(hid)
+        try:
+            res = self.mk_get(f"/addr/dom/{hid}/outage-queue")
+        except Exception:
+            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS["mykolaiv"]["co"][u["lang"]]))
+        q = next((str(x["outage"]["name"]) for x in res if isinstance(x, dict) and isinstance(x.get("outage"), dict)
+                  and isinstance(x.get("outageType"), dict) and x["outageType"].get("name") == "ГПВ"), None)
+        co = REGIONS["mykolaiv"]["co"][u["lang"]]
+        if q not in STANDARD_GROUPS:
+            return self.tg.send(chat_id, t["loe_no_queue"].format(h=html.escape(house or ""), co=co, v="—"), self.queue_pick_view(u)[1])
+        ns = (st.get("mk", {}).get("path", {}).get("ns") or {}).get("name", "")
+        label = f"{ns}, {st['street']['name']}, {house}"
+        if not self.add_address(chat_id, label, q, u["region"]):
+            return
+        if message_id:
+            self.tg.edit(chat_id, message_id, t["addr_saved"].format(label=html.escape(label), q=q))
+        return self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
 
     # ---------- Lvivoblenergo directory (power-api.loe.lviv.ua): town -> street -> buildings with their queue
     def loe_get(self, path, **params):
@@ -1758,6 +1874,8 @@ class Bot:
         house = st.get("houses", {}).get(hid)
         if not house or not st.get("street"):
             return
+        if REGIONS[u["region"]].get("lookup") == "mk":
+            return self.mk_house(chat_id, u, hid, message_id)
         if REGIONS[u["region"]].get("lookup") == "loe":
             value = st.get("loe_q", {}).get(hid, "")
             co = REGIONS[u["region"]]["co"][u["lang"]]
@@ -1851,6 +1969,29 @@ class Bot:
             return self.pick_street(chat_id, self.user(chat_id), val, mid)
         if kind == "x":
             return
+        if kind == "MK":
+            return self.tg.edit(chat_id, mid, *self.mk_filials_view(u))
+        if kind == "MKF":
+            fil = next((n for i, n in ((str(x["idfilial"]), x["fullname"]) for x in self.mk_get("/addr/filii")) if i == val), "")
+            items = [[str(x["idnaspunkt"]), x["naznaspunkt"]] for x in self.mk_get(f"/addr/filii/{val}/ns") if x.get("idnaspunkt")]
+            self.mk_set_level(chat_id, "ns", items, {"fil": {"id": val, "name": fil}})
+            if len(items) == 1:  # e.g. Mykolaiv city: straight to its streets
+                return self.mk_pick(chat_id, self.user(chat_id), items[0][0], mid)
+            return self.tg.edit(chat_id, mid, *self.mk_level_view(self.user(chat_id)))
+        if kind == "MKL" and self.state(u).get("mk"):
+            letter, _, page = val.partition(":")
+            return self.tg.edit(chat_id, mid, *self.mk_level_view(u, None if letter == "-" else letter, int(page) if page.isdigit() else 1))
+        if kind == "MKI" and self.state(u).get("mk"):
+            return self.mk_pick(chat_id, u, val, mid)
+        if kind == "MKB":
+            mk = self.state(u).get("mk") or {}
+            if mk.get("level") == "street" and mk.get("path", {}).get("fil"):
+                fid = mk["path"]["fil"]["id"]
+                items = [[str(x["idnaspunkt"]), x["naznaspunkt"]] for x in self.mk_get(f"/addr/filii/{fid}/ns") if x.get("idnaspunkt")]
+                if len(items) > 1:
+                    self.mk_set_level(chat_id, "ns", items, {"fil": mk["path"]["fil"]})
+                    return self.tg.edit(chat_id, mid, *self.mk_level_view(self.user(chat_id)))
+            return self.tg.edit(chat_id, mid, *self.mk_filials_view(u))
         if kind == "qq":
             q = val if all(x.isdigit() for x in val.split(".")) and val.count(".") == 1 else None
             if q and self.add_address(chat_id, t["queue_label"].format(q=q), q, u["region"]):
@@ -2386,6 +2527,23 @@ def self_test():
     if h96:
         step("Lviv: house 96 -> its queue", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": V}, "message_id": 4}, "data": f"h:{h96}"}),
              lambda s: "Черга" in s and "Наукова, 96" in s)
+
+    # Mykolaiv region: Mykolaivoblenergo's directory, district office -> town -> street -> house
+    M = 7800
+    bot.user(M, "uk")
+    bot.set_user(M, region="mykolaiv")
+    cbm = lambda data: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": M}, "message_id": 5}, "data": data})  # noqa: E731
+    step("Mykolaiv: district offices", lambda: cbm("MK"), lambda s: "дільницю" in s)
+    fid = next((b["callback_data"][4:] for r in (tg.out[-1][3] or []) for b in r if b["text"].startswith("Миколаївський")), None)
+    if fid:
+        step("Mykolaiv: city -> streets", lambda: cbm(f"MKF:{fid}"), lambda s: "вулицю" in s)
+        step("Mykolaiv: type 'Соборна'", lambda: bot.text(M, "Соборна"), lambda s: "1/1" in s or "вулицю" in s)
+        sid_m = next((b["callback_data"][4:] for r in (tg.out[-1][3] or []) for b in r if b["text"] == "вул. Соборна"), None)
+        if sid_m:
+            step("Mykolaiv: street -> houses", lambda: cbm(f"MKI:{sid_m}"), lambda s: "Соборна" in s)
+            h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
+            if h1:
+                step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
 
     # links that open a queue, and the share button
     step("link ?start=q4_1 opens queue 4.1", lambda: bot.text(5151, "/start q4_1", "uk"), lambda s: "Черга 4.1" in s)
