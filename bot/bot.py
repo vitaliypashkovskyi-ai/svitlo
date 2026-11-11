@@ -51,17 +51,16 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME", "LightUkraine_bot").strip().lstrip
 
 def deep_link(region, queue):
     """t.me link that opens the bot on a queue: ?start=q4_1 (Kyiv), ?start=odesa_q3_2 (other regions)."""
-    a, b = queue.split(".")
-    return f"https://t.me/{BOT_USERNAME}?start={'' if region == 'kyiv' else region + '_'}q{a}_{b}"
+    return f"https://t.me/{BOT_USERNAME}?start={'' if region == 'kyiv' else region + '_'}q{queue.replace('.', '_')}"
 
 
 def parse_start(param):
     """'q4_1' -> ('kyiv', '4.1'); 'kyiv-region_q2_1' -> ('kyiv-region', '2.1'); anything else -> None."""
     import re
-    m = re.fullmatch(r"(?:([a-z-]+)_)?q(\d{1,2})_(\d)", param or "")
+    m = re.fullmatch(r"(?:([a-z-]+)_)?q(\d{1,2})(?:_(\d))?", param or "")
     if not m or (m.group(1) and m.group(1) not in REGIONS):
         return None
-    return (m.group(1) or "kyiv"), f"{m.group(2)}.{m.group(3)}"
+    return (m.group(1) or "kyiv"), m.group(2) + (f".{m.group(3)}" if m.group(3) else "")
 DATA_BASE = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/"
 YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
 # Regions with DTEK schedules. yasno: (regionId, dsoId) for address search; cities: search asks for the town first.
@@ -104,6 +103,19 @@ REGIONS = {
     "poltava": {"uk": "Полтавська область", "en": "Poltava region", "yasno": None, "cities": False, "source": "pl",
                 "dtek": "https://www.poe.pl.ua/disconnection/power-outages/", "co": {"uk": "Полтаваобленерго", "en": "Poltavaoblenergo"},
                 "phones": ["0 800 205 035", "(0532) 510-910"], "tg": "https://t.me/PltOblEnergo_bot", "viber": None, "city": None},
+    "zaporizhzhia": {"uk": "Запорізька область", "en": "Zaporizhzhia region", "yasno": None, "cities": False, "source": "zp",
+                     "dtek": "https://www.zoe.com.ua/outage/", "co": {"uk": "Запоріжжяобленерго", "en": "Zaporizhzhiaoblenergo"},
+                     "phones": ["0 800 304 502"], "tg": None, "viber": None, "city": None},
+    "rivne": {"uk": "Рівненська область", "en": "Rivne region", "yasno": None, "cities": False, "source": "rv",
+              "dtek": "https://www.roe.vsei.ua/disconnections", "co": {"uk": "Рівнеобленерго", "en": "Rivneoblenergo"},
+              "phones": ["(0362) 69-45-55", "(067) 620-44-11"], "tg": None, "viber": None, "city": None},
+    "kharkiv": {"uk": "Харківська область", "en": "Kharkiv region", "yasno": None, "cities": False, "source": "kh",
+                "dtek": "https://oblenergo.kharkiv.ua/uk", "co": {"uk": "Харківобленерго", "en": "Kharkivoblenergo"},
+                "phones": ["0 800 508 413", "057 34 24 413"], "tg": None, "viber": None, "city": None},
+    "chernivtsi": {"uk": "Чернівецька область", "en": "Chernivtsi region", "yasno": None, "cities": False, "source": "cv",
+                   "groups": [str(i) for i in range(1, 13)],  # 12 queues, no subqueues
+                   "dtek": "https://oblenergo.cv.ua/shutdowns/", "co": {"uk": "Чернівціобленерго", "en": "Chernivtsioblenergo"},
+                   "phones": ["(099) 230-99-00", "(067) 230-99-00"], "tg": None, "viber": None, "city": None},
 }
 STANDARD_GROUPS = [f"{q}.{s_}" for q in range(1, 7) for s_ in (1, 2)]
 OE_TTL = 600  # official oblenergo APIs: every 10 minutes is plenty and stays polite
@@ -127,7 +139,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.22"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.23"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -745,7 +757,123 @@ def read_pl():
     return oe_payload(days)
 
 
-OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl}
+def oe_page(url, data=None):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        return r.read(3_000_000).decode("utf-8", "replace")
+
+
+def html_text(fragment):
+    """Text of an HTML fragment with paragraphs and <br> as line breaks."""
+    text = _re.sub(r"(?i)</p>|<br\s*/?>|</div>|</li>|</tr>", "\n", fragment)
+    return html.unescape(_re.sub(r"<[^>]+>", "", text))
+
+
+def groups_in_text(text):
+    """'1.1: 10:30 – 13:30, 17:00 – 18:30' or '1.1 07:00-10:30; 17:30-21:00' lines -> {group: intervals}."""
+    out = {}
+    for gm in _re.finditer(r"(?m)^\s*([1-6])\.([12])(?![\d.])\s*:?\s*((?:\d{1,2}\s*:\s*\d{2}\s*[-–—]\s*\d{1,2}\s*:\s*\d{2}[\s,;]*)*)", text):
+        out.setdefault(f"{gm[1]}.{gm[2]}", read_intervals(gm[3]))
+    return out
+
+
+def ua_day(day, month_word):
+    """('12', 'листопада') -> (year, 11, 12) near today; None for an unknown month."""
+    month = UA_MONTHS.get(month_word.lower())
+    if not month:
+        return None
+    now = time.gmtime(time.time() + 2 * 3600)
+    return now.tm_year + (1 if month < now.tm_mon - 6 else 0) - (1 if month > now.tm_mon + 6 else 0), month, int(day)
+
+
+def read_zp():
+    """Zaporizhzhiaoblenergo: <article>s on zoe.com.ua/outage/, newest first: 'ОНОВЛЕНО ГПВ НА 11 ЛИСТОПАДА …'
+    with '1.1: 15:30 – 19:30' lines; queues not listed have no outages."""
+    page = oe_page("https://www.zoe.com.ua/outage/")
+    days = {}
+    for art in _re.findall(r"<article.*?</article>", page, _re.S):
+        h = _re.search(r"<h2[^>]*>(.*?)</h2>", art, _re.S)
+        title = html_text(h.group(1)).strip() if h else ""
+        low = title.lower()
+        if "промислов" in low or not ("гпв" in low or "погодинн" in low):
+            continue
+        dm = _re.search(r"(\d{1,2})\s+([а-яіїє]+)", low)
+        day = ua_day(dm[1], dm[2]) if dm else None
+        if not day or day in days:
+            continue
+        if "не заплановані" in low or "не застосовуват" in low:
+            days[day] = {g: [] for g in STANDARD_GROUPS}
+            continue
+        groups = groups_in_text(html_text(art))
+        if groups:
+            days[day] = {g: groups.get(g, []) for g in STANDARD_GROUPS}
+    return oe_payload(dict(sorted(days.items())[-3:]))
+
+
+def read_rv():
+    """Rivneoblenergo: table in div#fetched-data-container — header row 1.1 … 6.2, then a row per day
+    ('11.11.2026', then a cell per subqueue with HH:MM-HH:MM lines or 'Очікується')."""
+    page = oe_page("https://www.roe.vsei.ua/disconnections")
+    i = page.find("fetched-data-container")
+    table = page[i:page.find("</table>", i)] if i >= 0 else ""
+    cols, days = [], {}
+    for row in _re.findall(r"<tr[^>]*>(.*?)</tr>", table, _re.S):
+        cells = [html_text(c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", row, _re.S)]
+        if cells and all(_re.fullmatch(r"[1-6]\.[12]", c) for c in cells[1:]) and len(cells) > 1:
+            cols = cells[1:]
+            continue
+        dm = _re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", cells[0]) if cells else None
+        if not dm or not cols:
+            continue
+        groups = {g: read_intervals(c) for g, c in zip(cols, cells[1:]) if "очікується" not in c.lower()}
+        if groups:
+            days[(int(dm[3]), int(dm[2]), int(dm[1]))] = groups
+    return oe_payload(days)
+
+
+def read_kh():
+    """Kharkivoblenergo: RSS items 'У Харківській області 12 листопада діятимуть графіки погодинних відключень'
+    with '1.1 02:30-06:00; 09:30-16:30' lines in the body. Newest first."""
+    feed = oe_page("https://oblenergo.kharkiv.ua/uk/rss.xml")
+    days = {}
+    for item in _re.findall(r"<item>(.*?)</item>", feed, _re.S):
+        tm = _re.search(r"<title>(.*?)</title>", item, _re.S)
+        title = html.unescape(tm.group(1)) if tm else ""
+        m = _re.search(r"(\d{1,2})\s+([а-яіїє]+)\s+діятимуть\s+(?:графіки\s+)?погодинн", title, _re.I)
+        day = ua_day(m[1], m[2]) if m else None
+        if not day or day in days:
+            continue
+        dm = _re.search(r"<description>(.*?)</description>", item, _re.S)
+        body = html.unescape(dm.group(1)) if dm else ""
+        b = body.find("field--name-body")
+        groups = groups_in_text(html_text(body[b:] if b >= 0 else body))
+        if groups:
+            days[day] = {g: groups.get(g, []) for g in STANDARD_GROUPS}
+    return oe_payload(dict(sorted(days.items())[-3:]))
+
+
+def read_cv():
+    """Chernivtsioblenergo: oblenergo.cv.ua/shutdowns/ (and ?next for tomorrow): div#inf1 … inf12 with 48
+    half-hour cells — 'в' off, 'з' on, 'мз' maybe on. The bold date in div#gsv_t is the page's day."""
+    days = {}
+    for url in ("https://oblenergo.cv.ua/shutdowns/", "https://oblenergo.cv.ua/shutdowns/?next"):
+        page = oe_page(url)
+        dm = _re.search(r'id="gsv_t".*?<b>\s*(\d{2})\.(\d{2})\.(\d{4})\s*</b>', page, _re.S)
+        if not dm:
+            continue
+        groups = {}
+        for g, cells_html in _re.findall(r'<div id="inf(\d{1,2})"[^>]*>(.*?)</div>', page, _re.S):
+            cells = [c.strip().lower() for c in _re.findall(r"<\w+>([^<]*)</\w+>", cells_html)]
+            if len(cells) != 48:
+                continue
+            groups[g] = [(i * 30, i * 30 + 30, c == "мз") for i, c in enumerate(cells) if c in ("в", "мз")]
+        if groups:
+            days[(int(dm[3]), int(dm[2]), int(dm[1]))] = groups
+    return oe_payload(days)
+
+
+OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv}
 
 
 def region_groups(region, data=None):
@@ -754,7 +882,7 @@ def region_groups(region, data=None):
     days = days_from_today(data, time.time()) if data else []
     if days and days[0][1]:
         return sorted((k[3:] for k in days[0][1]), key=lambda q: [int(x) for x in q.split(".")])
-    return [] if region == "kyiv" else list(STANDARD_GROUPS)
+    return [] if region == "kyiv" else list(REGIONS[region].get("groups") or STANDARD_GROUPS)
 
 
 def days_from_today(data, now):
@@ -825,8 +953,7 @@ def region_name(region, lang):
 
 
 def site_link(region, queue):
-    a, b = queue.split(".")
-    return f"{SITE_URL}#{'' if region == 'kyiv' else region + '-'}q{a}-{b}"
+    return f"{SITE_URL}#{'' if region == 'kyiv' else region + '-'}q{queue.replace('.', '-')}"
 
 
 def status_text(queue, lang, label, now=None, region="kyiv"):
@@ -2036,7 +2163,7 @@ class Bot:
                     return self.tg.edit(chat_id, mid, *self.mk_level_view(self.user(chat_id)))
             return self.tg.edit(chat_id, mid, *self.mk_filials_view(u))
         if kind == "qq":
-            q = val if all(x.isdigit() for x in val.split(".")) and val.count(".") == 1 else None
+            q = val if _re.fullmatch(r"\d{1,2}(\.\d)?", val) else None
             if q and self.add_address(chat_id, t["queue_label"].format(q=q), q, u["region"]):
                 return self.tg.edit(chat_id, mid, *self.status_view(self.user(chat_id)))
             return
@@ -2547,14 +2674,17 @@ def self_test():
                  lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
 
     # regions read from the oblenergos' official APIs: pick the region, tap the queue
-    for rg, co in (("mykolaiv", "Миколаївобленерго"), ("lviv", "Львівобленерго"), ("ivano-frankivsk", "Прикарпаттяобленерго"),
-                   ("cherkasy", "Черкасиобленерго"), ("poltava", "Полтаваобленерго")):
+    for rg, co, q1 in (("mykolaiv", "Миколаївобленерго", "1.1"), ("lviv", "Львівобленерго", "1.1"),
+                       ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
+                       ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
+                       ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
+                       ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
         step(f"{rg}: pick region -> {co} queue buttons", lambda: cbw(f"rg:{rg}"),
-             lambda s, co=co: any(co in o[2] for o in tg.out) and any(b.get("callback_data") == "qq:1.1" for r in tg.out[-1][3] for b in r))
-        step(f"{rg}: tap 1.1 -> schedule", lambda: cbw("qq:1.1"), lambda s: "Черга 1.1" in s)
+             lambda s, co=co, q1=q1: any(co in o[2] for o in tg.out) and any(b.get("callback_data") == "qq:" + q1 for r in tg.out[-1][3] for b in r))
+        step(f"{rg}: tap {q1} -> schedule", lambda q1=q1: cbw("qq:" + q1), lambda s, q1=q1: f"Черга {q1}" in s)
         dv = bot.dtek_view(bot.user(W))
         ok_dv = co in dv[0] and all(b.get("url") for r in dv[1] for b in r if "url" in b)
         step(f"{rg}: report view names {co}", lambda: tg.out.append(("send", W, "OK" if ok_dv else "BAD " + dv[0][:120], None)),
