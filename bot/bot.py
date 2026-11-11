@@ -74,7 +74,12 @@ AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
 UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
 UPDATE_FILES = ("bot.py", "streets.json")
 UPDATE_EVERY = 3600
-BOT_VERSION = "2026-11-11.5"  # bump on every release; shown in the log at start
+# People's reports ("no power" / "power is on"): a report counts for an hour; an alert needs at
+# least CROWD_MIN people of the same queue saying "no power" while the schedule says power is on.
+REPORT_TTL = 3600
+REPORT_COOLDOWN = 120
+CROWD_MIN = 2
+BOT_VERSION = "2026-11-11.6"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -155,6 +160,14 @@ T = {
         "dur": lambda h, m: f"{h} год {m:02d} хв" if h else f"{m} хв",
         # buttons
         "b_refresh": "🔄 Оновити", "b_site": "🌐 Сайт", "b_addr": "🏠 Адреси", "b_settings": "⚙️ Налаштування",
+        "b_rep_off": "⚡ У мене немає світла", "b_rep_on": "💡 Світло є",
+        "rep_thanks_off": "Дякую! Врахували: світла немає.", "rep_thanks_on": "Дякую! Врахували: світло є.",
+        "rep_wait": "Ви вже повідомили. Можна змінити за кілька хвилин.",
+        "crowd_off": "⚠️ <b>Схоже на аварійне відключення:</b> {n} з черги {q} повідомили, що світла немає, хоча за графіком воно має бути.",
+        "crowd_on": "💡 {n} з черги {q} повідомили, що світло вже є.",
+        "crowd_counts": "<i>Повідомлення людей за годину: ⚫ {off} · 💡 {on}</i>",
+        "crowd_alert": "⚠️ <b>Можливе аварійне відключення</b> у черзі {q}: {n} повідомили, що світла немає, хоча за графіком воно має бути.\nЯкщо у вас світло є — натисніть «💡 Світло є».",
+        "people": lambda n: f"{n} {'людина' if n % 10 == 1 and n % 100 != 11 else 'людини' if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else 'людей'}",
         "b_add": "➕ Додати адресу", "b_back": "⬅️ Назад",
         # addresses
         "addr_title": "<b>Ваші адреси</b> (до {n}). Натисніть, щоб зробити адресу основною. Нагадування приходять для всіх адрес.",
@@ -218,6 +231,14 @@ T = {
         "updated_at": "Updated {t}",
         "dur": lambda h, m: f"{h} h {m:02d} min" if h else f"{m} min",
         "b_refresh": "🔄 Refresh", "b_site": "🌐 Website", "b_addr": "🏠 Addresses", "b_settings": "⚙️ Settings",
+        "b_rep_off": "⚡ No power here", "b_rep_on": "💡 Power is on",
+        "rep_thanks_off": "Thanks! Noted: no power.", "rep_thanks_on": "Thanks! Noted: power is on.",
+        "rep_wait": "You've already reported. You can change it in a few minutes.",
+        "crowd_off": "⚠️ <b>Looks like an emergency outage:</b> {n} in queue {q} reported no power, although the schedule says it should be on.",
+        "crowd_on": "💡 {n} in queue {q} reported that power is already back.",
+        "crowd_counts": "<i>People's reports in the last hour: ⚫ {off} · 💡 {on}</i>",
+        "crowd_alert": "⚠️ <b>Possible emergency outage</b> in queue {q}: {n} reported no power, although the schedule says it should be on.\nIf you do have power, tap «💡 Power is on».",
+        "people": lambda n: f"{n} {'person' if n == 1 else 'people'}",
         "b_add": "➕ Add address", "b_back": "⬅️ Back",
         "addr_title": "<b>Your addresses</b> (up to {n}). Tap one to make it the main one. Reminders come for all of them.",
         "addr_empty": "No addresses yet.",
@@ -282,6 +303,8 @@ class DB:
                 tom_ts INTEGER, tom_sig TEXT);
             CREATE TABLE IF NOT EXISTS sent(chat_id INTEGER, mark TEXT, at INTEGER, PRIMARY KEY(chat_id, mark));
             CREATE TABLE IF NOT EXISTS pending(chat_id INTEGER, key TEXT, text TEXT, at INTEGER, PRIMARY KEY(chat_id, key));
+            CREATE TABLE IF NOT EXISTS reports(chat_id INTEGER, region TEXT, queue TEXT, state TEXT, at INTEGER,
+                PRIMARY KEY(chat_id, region, queue));
             """)
             for table in ("users", "addresses"):  # v3: every person and address belongs to a region
                 cols = [r[1] for r in self.con.execute(f"PRAGMA table_info({table})")]
@@ -592,9 +615,54 @@ class Bot:
         t = T[u["lang"]]
         if not a:
             return t["need_addr"], None
-        buttons = [[{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": site_link(a["region"], a["queue"])}],
+        buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
+                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": site_link(a["region"], a["queue"])}],
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
-        return status_text(a["queue"], u["lang"], a["label"], now, a["region"]), buttons
+        text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
+        line = self.crowd_line(a["region"], a["queue"], u["lang"], now)
+        return (text + "\n\n" + line if line else text), buttons
+
+    # ---------- people's reports
+    def crowd(self, region, queue, now=None):
+        now = now or time.time()
+        rows = self.db.q("SELECT state, COUNT(*) c FROM reports WHERE region=? AND queue=? AND at>=? GROUP BY state",
+                         (region, queue, int(now - REPORT_TTL)))
+        got = {r["state"]: r["c"] for r in rows}
+        return got.get("off", 0), got.get("on", 0)
+
+    def scheduled_now(self, region, queue, now=None):
+        now = now or time.time()
+        data = schedule(region)
+        days = days_from_today(data, now) if data else []
+        if not days or days[0][0] > now:
+            return None
+        return slots(days[0][1].get(queue_key(queue)))[min(47, int((now - days[0][0]) // 1800))]
+
+    def crowd_line(self, region, queue, lang, now=None):
+        off, on = self.crowd(region, queue, now)
+        if not off and not on:
+            return ""
+        t = T[lang]
+        sched = self.scheduled_now(region, queue, now)
+        if sched == "+" and off >= CROWD_MIN and off > on:
+            return t["crowd_off"].format(n=t["people"](off), q=queue)
+        if sched == "-" and on >= CROWD_MIN and on > off:
+            return t["crowd_on"].format(n=t["people"](on), q=queue)
+        return t["crowd_counts"].format(off=off, on=on)
+
+    def report(self, chat_id, u, state, now=None):
+        """Save 'off'/'on' for the person's main address. Returns the toast text."""
+        now = now or time.time()
+        t = T[u["lang"]]
+        a = self.active_address(u)
+        if not a:
+            return t["need_addr"].split(".")[0]
+        prev = self.db.one("SELECT state, at FROM reports WHERE chat_id=? AND region=? AND queue=?", (chat_id, a["region"], a["queue"]))
+        if prev and prev["state"] == state and now - prev["at"] < REPORT_COOLDOWN:
+            return t["rep_wait"]
+        self.db.q("INSERT OR REPLACE INTO reports(chat_id,region,queue,state,at) VALUES(?,?,?,?,?)",
+                  (chat_id, a["region"], a["queue"], state, int(now)))
+        return t["rep_thanks_off"] if state == "off" else t["rep_thanks_on"]
 
     def addr_view(self, u):
         t = T[u["lang"]]
@@ -886,10 +954,13 @@ class Bot:
         u = self.user(chat_id, cq["from"].get("language_code"))
         t = T[u["lang"]]
         kind, _, val = cq.get("data", "").partition(":")
+        toast = self.report(chat_id, u, val) if kind == "rp" and val in ("off", "on") else None
         try:
-            self.tg.call("answerCallbackQuery", timeout=10, callback_query_id=cq["id"])
+            self.tg.call("answerCallbackQuery", timeout=10, callback_query_id=cq["id"], **({"text": toast} if toast else {}))
         except Exception:
             pass
+        if kind == "rp":
+            return self.tg.edit(chat_id, mid, *self.status_view(self.user(chat_id)))
         if kind == "s":
             return self.pick_street(chat_id, u, val, mid)
         if kind == "c":
@@ -967,6 +1038,7 @@ class Bot:
                         self.tg.send(p["chat_id"], p["text"])
                         self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
         self.db.q("DELETE FROM sent WHERE at < ?", (int(now) - 3 * 86400,))
+        self.db.q("DELETE FROM reports WHERE at < ?", (int(now) - 86400,))
 
     def notify_region(self, region, now):
         data = schedule(region)
@@ -1011,6 +1083,10 @@ class Bot:
 
             subs = self.db.q("""SELECT a.id AS aid, a.label, u.* FROM addresses a JOIN users u ON u.chat_id=a.chat_id
                                 WHERE a.queue=? AND a.region=? AND u.notify=1 AND u.blocked=0""", (qn, region))
+            c_off, c_on = self.crowd(region, qn, now)
+            crowd_alarm = seq[idx] == "+" and c_off >= CROWD_MIN and c_off > c_on
+            reporters = {r["chat_id"] for r in self.db.q(
+                "SELECT chat_id FROM reports WHERE region=? AND queue=? AND at>=?", (region, qn, int(now - REPORT_TTL)))}
             for s in subs:
                 t = T[s["lang"]]
                 cid = s["chat_id"]
@@ -1022,6 +1098,12 @@ class Bot:
                 if back is not None and s["ret"]:
                     if self.mark(cid, f"ret:{s['aid']}:{today_ts}:{back}") and not user_quiet:
                         self.tg.send(cid, t["ret"].format(t=fmt(back * 30)) + tag)
+                if crowd_alarm and cid not in reporters:  # at most once an hour per address
+                    if self.mark(cid, f"crowd:{s['aid']}:{today_ts}:{int(now_min // 60)}") and not user_quiet:
+                        t2 = T[s["lang"]]
+                        self.tg.send(cid, t2["crowd_alert"].format(q=qn, n=t2["people"](c_off)) + tag,
+                                     [[{"text": t2["b_rep_off"], "callback_data": "rp:off"},
+                                       {"text": t2["b_rep_on"], "callback_data": "rp:on"}]])
                 for ev, mark in events:
                     if not self.mark(cid, f"{mark}:{s['aid']}"):
                         continue
@@ -1318,6 +1400,33 @@ def self_test():
         step("Dnipro: pick house", lambda: cb(f"h:{hid_d}"), lambda s: "Черга" in s)
     print("     addresses:", [(a["label"], a["queue"], a["region"]) for a in bot.addresses(C)])
     step("reminders across regions run", lambda: bot.notify_tick(), lambda s: True)
+
+    # people's reports: two people in Kyiv queue 4.1 say "no power" while the schedule says it's on
+    seq41 = slots(days[0][1].get("GPV4.1"))
+    j_on = next(i for i in range(2, 46) if seq41[i] == "+" and seq41[i + 1] == "+")
+    T0 = today_ts + j_on * 1800 + 60
+    A, B, D = 9001, 9002, 9003
+    for cid in (A, B, D):
+        bot.user(cid, "uk")
+        bot.add_address(cid, "Черга 4.1", "4.1", "kyiv")
+    step("report: first 'no power'", lambda: tg.out.append(("send", A, bot.report(A, bot.user(A), "off", now=T0), None)),
+         lambda s: "Врахували" in s)
+    step("report: same again too soon", lambda: tg.out.append(("send", A, bot.report(A, bot.user(A), "off", now=T0 + 30), None)),
+         lambda s: "вже повідомили" in s)
+    step("one report: just a count, no alarm", lambda: tg.out.append(("send", A, bot.status_view(bot.user(A), now=T0)[0].split("\n\n")[-1], None)),
+         lambda s: "⚫ 1" in s)
+    bot.report(B, bot.user(B), "off", now=T0 + 60)
+    step("two reports: 'looks like an emergency'", lambda: tg.out.append(("send", A, bot.status_view(bot.user(A), now=T0 + 90)[0].split("\n\n")[-1], None)),
+         lambda s: "аварійне" in s and "2 людини" in s)
+    print("     buttons:", [b["text"] for r in bot.status_view(bot.user(A), now=T0)[1] for b in r])
+    step("queue alert: subscribers who didn't report get it, reporters don't", lambda: bot.notify_tick(now=T0 + 120),
+         lambda s: any(o[1] == D and "Можливе аварійне" in o[2] for o in tg.out)
+         and not any(o[1] in (A, B) and "Можливе аварійне" in o[2] for o in tg.out))
+    step("no repeat within the hour", lambda: bot.notify_tick(now=T0 + 300), lambda s: "Можливе аварійне" not in s)
+    step("report expires after an hour", lambda: tg.out.append(("send", A, bot.crowd_line("kyiv", "4.1", "uk", now=T0 + 3700), None)),
+         lambda s: s == "")
+    step("button press via callback", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": D}, "message_id": 5}, "data": "rp:on"}),
+         lambda s: "Черга 4.1" in s)
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return ok
 
