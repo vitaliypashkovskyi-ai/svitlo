@@ -74,7 +74,7 @@ AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
 UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
 UPDATE_FILES = ("bot.py", "streets.json")
 UPDATE_EVERY = 3600
-BOT_VERSION = "2026-11-11.4"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.5"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1161,11 +1161,19 @@ class Bot:
                 log("update rejected, self-test failed:\n" + tail)
                 self.admin(f"❌ Оновлення бота {version} не пройшло самоперевірку — працює попередня версія.\n<pre>{html.escape(tail[-400:])}</pre>")
                 return
-            for name in changed:
-                dst = os.path.join(HERE, name)
-                if os.path.exists(dst):
-                    os.replace(dst, dst + ".bak")
-                os.replace(os.path.join(tmp, name), dst)
+        # Install. The temp folder may be on another disk than the bot folder (inside a container it is),
+        # and a rename can't cross disks — so write each file next to its target first, then swap it in
+        # with a same-folder rename, which is atomic: bot.py is never missing, even for a moment.
+        import shutil
+        for name in changed:
+            dst = os.path.join(HERE, name)
+            with open(dst + ".new", "wb") as f:
+                f.write(new[name])
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.exists(dst):
+                shutil.copy2(dst, dst + ".bak")
+            os.replace(dst + ".new", dst)
         log("updated:", ", ".join(changed), version)
         self.admin(f"🔄 Бот оновлено ({', '.join(changed)}, версія {version}).")
         if "bot.py" in changed:
