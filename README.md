@@ -6,6 +6,10 @@ Live outage schedule for DTEK Kyiv Electric Networks queues, in Ukrainian and En
 
 **Сайт:** https://vitaliypashkovskyi-ai.github.io/svitlo/
 
+## Регіони
+
+м. Київ (60 черг), Київська, Дніпропетровська та Одеська області (по 12 черг) — мережі ДТЕК, для яких є дані. Пошук за адресою: Київ і Дніпропетровська область (спершу населений пункт). Посилання на чергу: `#q4-1` (Київ), `#dnipro-q1-2`, `#odesa-q3-2`, `#kyiv-region-q2-1`.
+
 ## Звідки дані
 
 - Графік: публічна копія даних ДТЕК [Baskerville42/outage-data-ua](https://github.com/Baskerville42/outage-data-ua), оновлюється приблизно кожні 5 хвилин. Сторінка завантажує її сама раз на 5 хвилин.

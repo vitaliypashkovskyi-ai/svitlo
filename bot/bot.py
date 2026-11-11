@@ -46,9 +46,19 @@ TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(HERE, "data"))
 SITE_URL = os.environ.get("SITE_URL", "https://vitaliypashkovskyi-ai.github.io/svitlo/")
-SCHEDULE_URL = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/kyiv.json"
+DATA_BASE = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/"
 YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
-YASNO_PARAMS = {"regionId": "25", "dsoId": "902"}  # Київ, ДТЕК Київські електромережі
+# Regions with DTEK schedules. yasno: (regionId, dsoId) for address search; cities: search asks for the town first.
+REGIONS = {
+    "kyiv": {"uk": "м. Київ", "en": "Kyiv city", "yasno": ("25", "902"), "cities": False,
+             "dtek": "https://www.dtek-kem.com.ua/ua/shutdowns"},
+    "kyiv-region": {"uk": "Київська область", "en": "Kyiv region", "yasno": None, "cities": False,
+                    "dtek": "https://www.dtek-krem.com.ua/ua/shutdowns"},
+    "dnipro": {"uk": "Дніпропетровська область", "en": "Dnipropetrovsk region", "yasno": ("3", "301"), "cities": True,
+               "dtek": "https://www.dtek-dnem.com.ua/ua/shutdowns"},
+    "odesa": {"uk": "Одеська область", "en": "Odesa region", "yasno": None, "cities": False,
+              "dtek": "https://www.dtek-oem.com.ua/ua/shutdowns"},
+}
 
 SCHEDULE_TTL = 300            # refresh the schedule every 5 min
 STALE_AFTER = 3600            # alert the admin if data is older than 1 h
@@ -56,7 +66,7 @@ MAX_ADDRESSES = 5
 WARN_CHOICES = (15, 30, 60)
 QUIET_FROM, QUIET_TO = 23 * 60, 7 * 60
 RETURN_WINDOW = 10            # "power is back" message within 10 min after the scheduled time
-CACHE_TTL = {"streets": 86400, "houses": 7 * 86400, "group": 7 * 86400}
+CACHE_TTL = {"cities": 7 * 86400, "streets": 86400, "houses": 7 * 86400, "group": 7 * 86400}
 SEND_RATE = 25                # messages per second, below Telegram's ~30/s limit
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
@@ -104,7 +114,13 @@ T = {
     "uk": {
         "welcome": "Привіт! Я показую графік відключень світла ДТЕК у Києві.\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
         "ask_street": "Напишіть назву вулиці українською, наприклад <b>Хрещатик</b>.",
-        "help": "Що я вмію:\n/now — графік зараз\n/address — мої адреси (до 5)\n/settings — нагадування й мова\n/queue 4.1 — додати чергу вручну\n\nНапишіть назву вулиці, щоб додати адресу.",
+        "help": "Що я вмію:\n/now — графік зараз\n/address — мої адреси (до 5)\n/region — вибрати регіон\n/settings — нагадування й мова\n/queue 4.1 — додати чергу вручну\n\nНапишіть назву вулиці, щоб додати адресу.",
+        "b_region": "📍 Регіон: {r}", "pick_region": "Виберіть регіон. Графіки є для мереж ДТЕК у цих регіонах:",
+        "region_set": "Регіон: <b>{r}</b>.",
+        "region_no_search": "Пошук за адресою для регіону «{r}» недоступний. Дізнайтеся свою чергу на <a href=\"{url}\">сайті ДТЕК</a> і надішліть її, наприклад <code>/queue 3.2</code>",
+        "ask_city": "Напишіть назву населеного пункту, наприклад <b>Дніпро</b>.\n<i>Пошук працює для адрес ДТЕК Дніпровські електромережі.</i>",
+        "pick_city": "Виберіть населений пункт:", "no_cities": "Не знайшов такого населеного пункту. Напишіть хоча б 3 літери назви.",
+        "ask_street_in": "<b>{city}</b>\nТепер напишіть назву вулиці.",
         "short": "Напишіть хоча б 3 літери назви вулиці або виберіть її зі списку.",
         "b_list": "🔤 Вибрати зі списку", "b_letters": "🔤 Літери",
         "pick_letter": "Виберіть першу літеру назви вулиці.\n<i>Наприклад, для «просп. Гонгадзе Георгія» — літера Г.</i>",
@@ -153,13 +169,19 @@ T = {
         "stale": "⚠️ Дані графіка не оновлювалися {m} хв. Останнє оновлення: {t}.",
         "stale_ok": "✅ Дані графіка знову оновлюються.",
         "myid": "Ваш chat id: <code>{id}</code>\nДодайте в .env: <code>ADMIN_CHAT_ID={id}</code>",
-        "commands": [("now", "Графік зараз"), ("address", "Мої адреси"), ("settings", "Нагадування й мова"),
+        "commands": [("now", "Графік зараз"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
         "welcome": "Hi! I show DTEK's power outage schedule for Kyiv.\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
         "ask_street": "Type the street name in Ukrainian, for example <b>Хрещатик</b>.",
-        "help": "What I can do:\n/now — schedule now\n/address — my addresses (up to 5)\n/settings — reminders and language\n/queue 4.1 — add a queue manually\n\nType a street name to add an address.",
+        "help": "What I can do:\n/now — schedule now\n/address — my addresses (up to 5)\n/region — choose the region\n/settings — reminders and language\n/queue 4.1 — add a queue manually\n\nType a street name to add an address.",
+        "b_region": "📍 Region: {r}", "pick_region": "Pick your region. Schedules are available for DTEK networks in these regions:",
+        "region_set": "Region: <b>{r}</b>.",
+        "region_no_search": "Address search isn't available for {r}. Look up your queue on the <a href=\"{url}\">DTEK website</a> and send it, for example <code>/queue 3.2</code>",
+        "ask_city": "Type the town or village name in Ukrainian, for example <b>Дніпро</b>.\n<i>Search covers addresses served by DTEK Dnipro Electric Networks.</i>",
+        "pick_city": "Pick the town or village:", "no_cities": "No such town found. Type at least 3 letters of the name.",
+        "ask_street_in": "<b>{city}</b>\nNow type the street name.",
         "short": "Type at least 3 letters of the street name, or pick it from the list.",
         "b_list": "🔤 Pick from the list", "b_letters": "🔤 Letters",
         "pick_letter": "Pick the first letter of the street name.\n<i>For example, «просп. Гонгадзе Георгія» is under Г.</i>",
@@ -204,7 +226,7 @@ T = {
         "stale": "⚠️ Schedule data hasn't updated for {m} min. Last update: {t}.",
         "stale_ok": "✅ Schedule data is updating again.",
         "myid": "Your chat id: <code>{id}</code>\nAdd to .env: <code>ADMIN_CHAT_ID={id}</code>",
-        "commands": [("now", "Schedule now"), ("address", "My addresses"), ("settings", "Reminders and language"),
+        "commands": [("now", "Schedule now"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
 }
@@ -248,6 +270,11 @@ class DB:
             CREATE TABLE IF NOT EXISTS sent(chat_id INTEGER, mark TEXT, at INTEGER, PRIMARY KEY(chat_id, mark));
             CREATE TABLE IF NOT EXISTS pending(chat_id INTEGER, key TEXT, text TEXT, at INTEGER, PRIMARY KEY(chat_id, key));
             """)
+            for table in ("users", "addresses"):  # v3: every person and address belongs to a region
+                cols = [r[1] for r in self.con.execute(f"PRAGMA table_info({table})")]
+                if "region" not in cols:
+                    self.con.execute(f"ALTER TABLE {table} ADD COLUMN region TEXT DEFAULT 'kyiv'")
+            self.con.commit()
 
     def q(self, sql, args=()):
         with self.lock:
@@ -283,21 +310,23 @@ class DB:
 
 # ===================================================================== schedule
 SLOT = {"yes": "++", "no": "--", "first": "-+", "second": "+-", "maybe": "??", "mfirst": "?+", "msecond": "+?"}
-_sched = {"at": 0, "ok_at": 0, "data": None}
+_scheds = {r: {"at": 0, "ok_at": 0, "data": None} for r in REGIONS}
+_sched = _scheds["kyiv"]  # kept for the self-test
 _sched_lock = threading.Lock()
 
 
-def schedule(force=False):
+def schedule(region="kyiv", force=False):
+    sc = _scheds[region]
     with _sched_lock:
-        if force or time.time() - _sched["at"] > SCHEDULE_TTL or not _sched["data"]:
-            _sched["at"] = time.time()
+        if force or time.time() - sc["at"] > SCHEDULE_TTL or not sc["data"]:
+            sc["at"] = time.time()
             try:
-                _sched["data"] = http_json(SCHEDULE_URL + f"?t={int(time.time())}", timeout=30)
-                _sched["ok_at"] = time.time()
+                sc["data"] = http_json(DATA_BASE + f"{region}.json?t={int(time.time())}", timeout=30)
+                sc["ok_at"] = time.time()
             except Exception as e:
-                log("schedule fetch failed:", e)
-                _sched["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
-        return _sched["data"]
+                log("schedule fetch failed:", region, e)
+                sc["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
+        return sc["data"]
 
 
 def days_from_today(data, now):
@@ -351,10 +380,19 @@ def kyiv_minutes(data, now):
     return None, None
 
 
-def status_text(queue, lang, label, now=None):
+def region_name(region, lang):
+    return REGIONS.get(region, REGIONS["kyiv"])[lang]
+
+
+def site_link(region, queue):
+    a, b = queue.split(".")
+    return f"{SITE_URL}#{'' if region == 'kyiv' else region + '-'}q{a}-{b}"
+
+
+def status_text(queue, lang, label, now=None, region="kyiv"):
     t = T[lang]
     now = now or time.time()
-    data = schedule()
+    data = schedule(region)
     if not data:
         return t["no_data"]
     days = days_from_today(data, now)
@@ -362,6 +400,8 @@ def status_text(queue, lang, label, now=None):
     head = f"<b>{t['title'].format(q=queue)}</b>"
     if label and label != T[lang]["queue_label"].format(q=queue):
         head += f" · {html.escape(label)}"
+    if region != "kyiv":
+        head += f"\n<i>{region_name(region, lang)}</i>"
     lines = [head]
     today = days[0] if days and days[0][0] <= now else None
     if today:
@@ -494,30 +534,33 @@ class Bot:
         a = self.db.one("SELECT * FROM addresses WHERE id=? AND chat_id=?", (u["active"], u["chat_id"])) if u["active"] else None
         return a or self.db.one("SELECT * FROM addresses WHERE chat_id=? ORDER BY id LIMIT 1", (u["chat_id"],))
 
-    def add_address(self, chat_id, label, queue):
+    def add_address(self, chat_id, label, queue, region="kyiv"):
         u = self.user(chat_id)
         t = T[u["lang"]]
-        same = self.db.one("SELECT id FROM addresses WHERE chat_id=? AND label=? AND queue=?", (chat_id, label, queue))
+        same = self.db.one("SELECT id FROM addresses WHERE chat_id=? AND label=? AND queue=? AND region=?",
+                           (chat_id, label, queue, region))
         if same:
             aid = same["id"]
         else:
             if len(self.addresses(chat_id)) >= MAX_ADDRESSES:
                 self.tg.send(chat_id, t["too_many"].format(n=MAX_ADDRESSES))
                 return None
-            self.db.q("INSERT INTO addresses(chat_id,label,queue,created) VALUES(?,?,?,?)",
-                      (chat_id, label, queue, int(time.time())))
+            self.db.q("INSERT INTO addresses(chat_id,label,queue,created,region) VALUES(?,?,?,?,?)",
+                      (chat_id, label, queue, int(time.time()), region))
             aid = self.db.one("SELECT max(id) AS id FROM addresses WHERE chat_id=?", (chat_id,))["id"]
         self.set_user(chat_id, active=aid, state=None)
         return aid
 
-    def yasno(self, endpoint, **params):
+    def yasno(self, endpoint, region="kyiv", **params):
         """YASNO lookup with a cache: fresh hits are instant; if YASNO is down, stale data is used."""
+        rid, dso = REGIONS[region]["yasno"]
+        params = {"regionId": rid, "dsoId": dso, **params}
         key = endpoint + ":" + json.dumps(params, sort_keys=True, ensure_ascii=False)
         row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
         if row and time.time() - row["at"] < CACHE_TTL[endpoint]:
             return json.loads(row["value"])
         try:
-            q = urllib.parse.urlencode({**YASNO_PARAMS, **params})
+            q = urllib.parse.urlencode(params)
             val = http_json(f"{YASNO}/{endpoint}?{q}", timeout=10)
             self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)",
                       (key, json.dumps(val, ensure_ascii=False), int(time.time())))
@@ -534,10 +577,9 @@ class Bot:
         t = T[u["lang"]]
         if not a:
             return t["need_addr"], None
-        qa, qb = a["queue"].split(".")
-        buttons = [[{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": f"{SITE_URL}#q{qa}-{qb}"}],
+        buttons = [[{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": site_link(a["region"], a["queue"])}],
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
-        return status_text(a["queue"], u["lang"], a["label"], now), buttons
+        return status_text(a["queue"], u["lang"], a["label"], now, a["region"]), buttons
 
     def addr_view(self, u):
         t = T[u["lang"]]
@@ -545,7 +587,8 @@ class Bot:
         rows = []
         for a in self.addresses(u["chat_id"]):
             mark = "✓ " if active and a["id"] == active["id"] else ""
-            rows.append([{"text": f"{mark}{a['label'][:40]} · {a['queue']}", "callback_data": f"as:{a['id']}"},
+            where = "" if a["region"] == "kyiv" else " · " + region_name(a["region"], u["lang"]).split()[0]
+            rows.append([{"text": f"{mark}{a['label'][:36]} · {a['queue']}{where}", "callback_data": f"as:{a['id']}"},
                          {"text": "🗑", "callback_data": f"ad:{a['id']}"}])
         if len(rows) < MAX_ADDRESSES:
             rows.append([{"text": t["b_add"], "callback_data": "aa"}])
@@ -554,7 +597,24 @@ class Bot:
         return text, rows
 
     def list_button(self, u):
-        return [[{"text": T[u["lang"]]["b_list"], "callback_data": "L"}]] if STREETS else None
+        rows = [[{"text": T[u["lang"]]["b_list"], "callback_data": "L"}]] if STREETS and u["region"] == "kyiv" else []
+        rows.append([{"text": T[u["lang"]]["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
+        return rows
+
+    def region_view(self, u):
+        t = T[u["lang"]]
+        rows = [[{"text": ("✓ " if k == u["region"] else "") + region_name(k, u["lang"]), "callback_data": f"rg:{k}"}] for k in REGIONS]
+        return t["pick_region"], rows
+
+    def ask_address(self, chat_id, u):
+        """Start adding an address in the user's region."""
+        t = T[u["lang"]]
+        R = REGIONS[u["region"]]
+        self.set_state(chat_id, {})
+        if not R["yasno"]:
+            return self.tg.send(chat_id, t["region_no_search"].format(r=region_name(u["region"], u["lang"]), url=R["dtek"]),
+                                [[{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}]])
+        self.tg.send(chat_id, t["ask_city"] if R["cities"] else t["ask_street"], self.list_button(u))
 
     def letters_view(self, u):
         letters = [l for l in LETTERS if l in STREETS] + (["0–9"] if "0–9" in STREETS else [])
@@ -583,6 +643,7 @@ class Bot:
                 [{"text": ("✓ " if u["warn_min"] == m else "") + t["s_min"].format(m=m), "callback_data": f"sw:{m}"} for m in WARN_CHOICES],
                 [{"text": f"{t['s_ret']}: {onoff(u['ret'])}", "callback_data": "sr"}],
                 [{"text": f"{t['s_quiet']}: {onoff(u['quiet'])}", "callback_data": "sq"}],
+                [{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}],
                 [{"text": t["s_lang"], "callback_data": "sl"}],
                 [{"text": t["b_back"], "callback_data": "r"}]]
         return f"{t['set_title']}\n\n{t['s_before']}", rows
@@ -617,6 +678,8 @@ class Bot:
                 self.tg.send(chat_id, *self.status_view(u))
             else:
                 self.tg.send(chat_id, t["welcome"], self.list_button(u))
+        elif cmd == "/region":
+            self.tg.send(chat_id, *self.region_view(u))
         elif cmd == "/help":
             self.tg.send(chat_id, t["help"])
         elif cmd == "/now":
@@ -624,18 +687,18 @@ class Bot:
         elif cmd in ("/address", "/addresses"):
             if arg:
                 self.set_state(chat_id, {})
-                self.search_streets(chat_id, self.user(chat_id), arg)
+                self.free_text(chat_id, self.user(chat_id), arg)
             else:
                 self.tg.send(chat_id, *self.addr_view(u))
         elif cmd == "/settings":
             self.tg.send(chat_id, *self.settings_view(u))
         elif cmd == "/queue":
             q = norm_queue(arg)
-            data = schedule()
+            data = schedule(u["region"])
             days = days_from_today(data, time.time()) if data else []
             if not q or not days or queue_key(q) not in days[0][1]:
                 self.tg.send(chat_id, t["bad_queue"])
-            elif self.add_address(chat_id, t["queue_label"].format(q=q), q):
+            elif self.add_address(chat_id, t["queue_label"].format(q=q), q, u["region"]):
                 self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
         elif cmd == "/lang":
             self.set_user(chat_id, lang="en" if u["lang"] == "uk" else "uk")
@@ -644,14 +707,53 @@ class Bot:
             self.tg.send(chat_id, t["myid"].format(id=chat_id))
         elif cmd.startswith("/"):
             self.tg.send(chat_id, t["help"])
-        elif self.state(u).get("street"):
-            self.search_houses(chat_id, u, m)
         else:
-            self.search_streets(chat_id, u, m)
+            self.free_text(chat_id, u, m)
+
+    def free_text(self, chat_id, u, m):
+        """Plain text: a house number, a street name or (in regions with towns) a town name."""
+        st = self.state(u)
+        R = REGIONS[u["region"]]
+        if not R["yasno"]:
+            return self.ask_address(chat_id, u)
+        if st.get("street"):
+            return self.search_houses(chat_id, u, m)
+        if R["cities"] and not st.get("city"):
+            return self.search_cities(chat_id, u, m)
+        return self.search_streets(chat_id, u, m)
+
+    def search_cities(self, chat_id, u, q):
+        t = T[u["lang"]]
+        if len(q) < 3:
+            return self.tg.send(chat_id, t["no_cities"])
+        try:
+            res = self.yasno("cities", u["region"], query=q[:60])
+        except Exception:
+            return self.tg.send(chat_id, t["yasno_err"])
+        if not res:
+            return self.tg.send(chat_id, t["no_cities"])
+        self.set_state(chat_id, {"cities": {str(c["id"]): c["value"] for c in res[:30]}})
+        exact = [c for c in res if c["value"].split(" ", 1)[-1].lower() == q.lower()]
+        if len(res) == 1 or len(exact) == 1:
+            return self.pick_city(chat_id, self.user(chat_id), str((exact or res)[0]["id"]))
+        self.tg.send(chat_id, t["pick_city"], [[{"text": c["value"][:60], "callback_data": f"c:{c['id']}"}] for c in res[:30]])
+
+    def pick_city(self, chat_id, u, cid, message_id=None):
+        name = self.state(u).get("cities", {}).get(cid)
+        if not name:
+            return
+        self.set_state(chat_id, {"city": {"id": cid, "name": name}})
+        text = T[u["lang"]]["ask_street_in"].format(city=html.escape(name))
+        if message_id:
+            self.tg.edit(chat_id, message_id, text)
+        else:
+            self.tg.send(chat_id, text)
 
     def search_streets(self, chat_id, u, q):
         t = T[u["lang"]]
-        if STREET_BY_ID and len(q) >= 2:
+        st0 = self.state(u)
+        town = {"cityId": st0["city"]["id"]} if st0.get("city") else {}
+        if STREET_BY_ID and u["region"] == "kyiv" and len(q) >= 2:
             # local list: instant, works with short input, no load on YASNO
             ql = q.lower().replace("’", "'")
             res = [{"id": sid, "value": v} for sid, v in STREET_BY_ID.items() if ql in v.lower().replace("’", "'")]
@@ -660,12 +762,12 @@ class Bot:
             return self.tg.send(chat_id, t["short"], self.list_button(u))
         else:
             try:
-                res = self.yasno("streets", query=q[:60])
+                res = self.yasno("streets", u["region"], query=q[:60], **town)
             except Exception:
                 return self.tg.send(chat_id, t["yasno_err"], self.list_button(u))
         if not res:
             return self.tg.send(chat_id, t["no_streets"], self.list_button(u))
-        st = {"streets": {str(s["id"]): s["value"] for s in res[:30]}}
+        st = {"streets": {str(s["id"]): s["value"] for s in res[:30]}, **({"city": st0["city"]} if st0.get("city") else {})}
         self.set_state(chat_id, st)
         if len(res) == 1:
             return self.pick_street(chat_id, self.user(chat_id), str(res[0]["id"]))
@@ -688,12 +790,13 @@ class Bot:
         t = T[u["lang"]]
         st = self.state(u)
         try:
-            res = self.yasno("houses", streetId=st["street"]["id"], query=q[:20])
+            town = {"cityId": st["city"]["id"]} if st.get("city") else {}
+            res = self.yasno("houses", u["region"], streetId=st["street"]["id"], query=q[:20], **town)
         except Exception:
             return self.tg.send(chat_id, t["yasno_err"])
         if not res:
             if not any(ch.isdigit() for ch in q):  # probably a new street name
-                self.set_state(chat_id, {})
+                self.set_state(chat_id, {"city": st["city"]} if st.get("city") else {})
                 return self.search_streets(chat_id, self.user(chat_id), q)
             return self.tg.send(chat_id, t["no_houses"].format(q=html.escape(q)))
 
@@ -724,14 +827,15 @@ class Bot:
         if not house or not st.get("street"):
             return
         try:
-            g = self.yasno("group", streetId=st["street"]["id"], houseId=hid)
+            town = {"cityId": st["city"]["id"]} if st.get("city") else {}
+            g = self.yasno("group", u["region"], streetId=st["street"]["id"], houseId=hid, **town)
         except Exception:
             return self.tg.send(chat_id, t["yasno_err"])
         if g.get("group") is None:
             return self.tg.send(chat_id, t["no_group"])
         queue = f"{g['group']}.{g.get('subgroup') or 1}"
-        label = f"{st['street']['name']}, {house}"
-        if not self.add_address(chat_id, label, queue):
+        label = (f"{st['city']['name']}, " if st.get("city") else "") + f"{st['street']['name']}, {house}"
+        if not self.add_address(chat_id, label, queue, u["region"]):
             return
         u = self.user(chat_id)
         if message_id:
@@ -750,6 +854,17 @@ class Bot:
             pass
         if kind == "s":
             return self.pick_street(chat_id, u, val, mid)
+        if kind == "c":
+            return self.pick_city(chat_id, u, val, mid)
+        if kind == "rg":
+            if not val:
+                return self.tg.edit(chat_id, mid, *self.region_view(u))
+            if val in REGIONS:
+                self.set_user(chat_id, region=val, state=None)
+                u = self.user(chat_id)
+                self.tg.edit(chat_id, mid, T[u["lang"]]["region_set"].format(r=region_name(val, u["lang"])))
+                return self.ask_address(chat_id, u)
+            return
         if kind == "h":
             return self.pick_house(chat_id, u, val, mid)
         if kind == "r":
@@ -765,8 +880,7 @@ class Bot:
                 self.set_user(chat_id, active=None)
             return self.tg.edit(chat_id, mid, *self.addr_view(self.user(chat_id)))
         if kind == "aa":
-            self.set_state(chat_id, {})
-            return self.tg.send(chat_id, t["ask_street"], self.list_button(u))
+            return self.ask_address(chat_id, u)
         if kind == "LL":  # back to letters from inside the list: edit in place
             return self.tg.edit(chat_id, mid, *self.letters_view(u))
         if kind == "L":
@@ -800,8 +914,24 @@ class Bot:
     # ---------- notifications
     def notify_tick(self, now=None):
         now = now or time.time()
-        data = schedule()
-        self.check_stale(data, now)
+        self.check_stale(schedule("kyiv"), now)
+        regions = [r["region"] for r in self.db.q("SELECT DISTINCT region FROM addresses")] or ["kyiv"]
+        for region in regions:
+            if region in REGIONS:
+                self.notify_region(region, now)
+        if True:
+            data = schedule("kyiv")
+            days = days_from_today(data, now) if data else []
+            if days and days[0][0] <= now:
+                now_min = (now - days[0][0]) / 60
+                if not (now_min >= QUIET_FROM or now_min < QUIET_TO):  # flush what waited for the end of quiet hours
+                    for p in self.db.q("SELECT * FROM pending ORDER BY at"):
+                        self.tg.send(p["chat_id"], p["text"])
+                        self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
+        self.db.q("DELETE FROM sent WHERE at < ?", (int(now) - 3 * 86400,))
+
+    def notify_region(self, region, now):
+        data = schedule(region)
         if not data:
             return
         days = days_from_today(data, now)
@@ -811,7 +941,7 @@ class Bot:
         now_min = (now - today_ts) / 60
         quiet_now = now_min >= QUIET_FROM or now_min < QUIET_TO
         tomorrow = next((d for d in days if d[0] > now), None)
-        queues = [r["queue"] for r in self.db.q("SELECT DISTINCT queue FROM addresses")]
+        queues = [r["queue"] for r in self.db.q("SELECT DISTINCT queue FROM addresses WHERE region=?", (region,))]
 
         # one pass per queue (≤ 60), not per user
         for qn in queues:
@@ -823,7 +953,8 @@ class Bot:
             tom_sig = slots(tomorrow[1].get(key)) if tomorrow else None
             events = []
 
-            row = self.db.one("SELECT * FROM queue_state WHERE queue=?", (qn,))
+            skey = qn if region == "kyiv" else f"{region}:{qn}"
+            row = self.db.one("SELECT * FROM queue_state WHERE queue=?", (skey,))
             if row:
                 if row["day_ts"] == today_ts and row["today_sig"] != today_sig:
                     events.append(("changed_today", f"chg:{today_ts}:{today_sig}"))
@@ -832,7 +963,7 @@ class Bot:
                 elif tomorrow and row["tom_sig"] != tom_sig:
                     events.append(("tomorrow_changed", f"tomchg:{tomorrow[0]}:{tom_sig}"))
             self.db.q("INSERT OR REPLACE INTO queue_state(queue,day_ts,today_sig,tom_ts,tom_sig) VALUES(?,?,?,?,?)",
-                      (qn, today_ts, today_sig, tomorrow[0] if tomorrow else None, tom_sig))
+                      (skey, today_ts, today_sig, tomorrow[0] if tomorrow else None, tom_sig))
 
             idx = int(now_min // 30)
             nxt_off = next((j for j in range(idx + 1, len(seq)) if seq[j] == "-" and seq[j - 1] != "-"), None)
@@ -841,7 +972,7 @@ class Bot:
                          if seq[j] == "+" and seq[j - 1] == "-" and 0 <= now_min - j * 30 < RETURN_WINDOW), None)
 
             subs = self.db.q("""SELECT a.id AS aid, a.label, u.* FROM addresses a JOIN users u ON u.chat_id=a.chat_id
-                                WHERE a.queue=? AND u.notify=1 AND u.blocked=0""", (qn,))
+                                WHERE a.queue=? AND a.region=? AND u.notify=1 AND u.blocked=0""", (qn, region))
             for s in subs:
                 t = T[s["lang"]]
                 cid = s["chat_id"]
@@ -856,18 +987,13 @@ class Bot:
                 for ev, mark in events:
                     if not self.mark(cid, f"{mark}:{s['aid']}"):
                         continue
-                    text = t[ev] + "\n\n" + status_text(qn, s["lang"], s["label"], now)
+                    text = t[ev] + "\n\n" + status_text(qn, s["lang"], s["label"], now, region)
                     if user_quiet:  # deliver at 07:00; keep only the latest version per address
                         self.db.q("INSERT OR REPLACE INTO pending(chat_id,key,text,at) VALUES(?,?,?,?)",
                                   (cid, f"{ev[:3]}:{s['aid']}", text, int(now)))
                     else:
                         self.tg.send(cid, text)
 
-        if not quiet_now:  # flush what waited for the end of quiet hours
-            for p in self.db.q("SELECT * FROM pending ORDER BY at"):
-                self.tg.send(p["chat_id"], p["text"])
-                self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
-        self.db.q("DELETE FROM sent WHERE at < ?", (int(now) - 3 * 86400,))
 
     def mark(self, chat_id, mark):
         """True the first time a mark is seen for this chat (so each reminder is sent once)."""
@@ -1034,6 +1160,26 @@ def self_test():
     step("…and arrives after 07:00", lambda: bot.notify_tick(now=today_ts + 7 * 3600 + 60),
          lambda s: "графік на завтра" in s)
     _sched["data"] = data
+    bot.set_user(C, quiet=0)
+
+    # regions
+    step("region picker", lambda: cb("rg"), lambda s: "Виберіть регіон" in s)
+    print("     buttons:", btns())
+    step("Odesa: no address search", lambda: cb("rg:odesa"), lambda s: "недоступний" in s)
+    step("Odesa: /queue 3.2", lambda: bot.text(C, "/queue 3.2"), lambda s: "Черга 3.2" in s)
+    print("     ", tg.out[-1][2].split("\n")[1], "| site:", [b.get("url") for r in tg.out[-1][3] for b in r if b.get("url")])
+    step("Dnipro: asks for town", lambda: cb("rg:dnipro"), lambda s: "населеного пункту" in s)
+    step("Dnipro: town", lambda: bot.text(C, "Дніпро"), lambda s: "м. Дніпро" in s)
+    step("Dnipro: street", lambda: bot.text(C, "Яворн"), lambda s: "Виберіть вулицю" in s or "Яворницького" in s)
+    if tg.out and tg.out[-1][3]:
+        sid_d = tg.out[-1][3][0][0]["callback_data"].split(":")[1]
+        step("Dnipro: pick street", lambda: cb(f"s:{sid_d}"), lambda s: "Яворницького" in s)
+    step("Dnipro: house 1", lambda: bot.text(C, "1"), lambda s: "Черга" in s or "Виберіть будинок" in s)
+    if tg.out and tg.out[-1][2].startswith(("Виберіть будинок", "Pick")):
+        hid_d = tg.out[-1][3][0][0]["callback_data"].split(":")[1]
+        step("Dnipro: pick house", lambda: cb(f"h:{hid_d}"), lambda s: "Черга" in s)
+    print("     addresses:", [(a["label"], a["queue"], a["region"]) for a in bot.addresses(C)])
+    step("reminders across regions run", lambda: bot.notify_tick(), lambda s: True)
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return ok
 

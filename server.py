@@ -14,12 +14,13 @@ import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
-REGION_ID = "25"   # Київ
-DSO_ID = "902"     # ДТЕК Київські електромережі
+# region -> (YASNO regionId, dsoId); same as api.php
+REGIONS = {"kyiv": ("25", "902"), "dnipro": ("3", "301")}
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # endpoint -> allowed query params passed through from the browser
 ROUTES = {
+    "cities": ("query",),
     "streets": ("query",),
     "houses": ("streetId", "query"),
     "group": ("streetId", "houseId"),
@@ -44,12 +45,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if name not in ROUTES:
             return self.send_json(404, {"error": "unknown endpoint"})
-        params = {"regionId": REGION_ID, "dsoId": DSO_ID}
+        region = (qs.get("region") or ["kyiv"])[0]
+        if region not in REGIONS:
+            return self.send_json(400, {"error": "address search is not available for this region"})
+        params = {"regionId": REGIONS[region][0], "dsoId": REGIONS[region][1]}
         for key in ROUTES[name]:
             val = (qs.get(key) or [""])[0][:100]
             if not val:
                 return self.send_json(400, {"error": f"missing {key}"})
             params[key] = val
+        city = (qs.get("cityId") or [""])[0]
+        if city.isdigit():
+            params["cityId"] = city
         target = f"{YASNO}/{name}?{urllib.parse.urlencode(params)}"
         req = urllib.request.Request(target, headers={
             "User-Agent": "svitlo-kyiv-local/1.0",
