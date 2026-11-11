@@ -5,3 +5,5 @@ bot/.env
 bot/data/
 tools/nominatim_cache.json
 mockup_districts.html
+mockup_reports.html
+tools/dnipro_cache.json

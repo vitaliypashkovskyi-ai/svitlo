@@ -100,14 +100,14 @@ SEND_RATE = 25                # messages per second, below Telegram's ~30/s limi
 # version's self-test and only then switches to it. AUTO_UPDATE=0 in .env turns it off.
 AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
 UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
-UPDATE_FILES = ("bot.py", "streets.json", "districts.json")  # districts.json is optional
+UPDATE_FILES = ("bot.py", "streets.json", "districts.json", "dnipro_streets.json")  # data files are optional
 UPDATE_EVERY = 3600
 # People's reports ("no power" / "power is on"): a report counts for an hour; an alert needs at
 # least CROWD_MIN people of the same queue saying "no power" while the schedule says power is on.
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.15"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.16"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -163,6 +163,40 @@ def load_districts():
 
 
 DISTRICTS = load_districts()
+DNIPRO_FILE = os.environ.get("DNIPRO_FILE", os.path.join(HERE, "dnipro_streets.json"))
+
+
+def load_dnipro():
+    """Towns of Dnipropetrovsk region with their streets (tools/build_dnipro.py).
+    Returns {town_id: (town_name, {letter: [(main, street_id, street_value)]}, {street_id: value})}."""
+    try:
+        with open(DNIPRO_FILE, encoding="utf-8") as f:
+            towns = json.load(f)["towns"]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        return {}
+    out = {}
+    for tw in towns:
+        by_letter, by_id = {}, {}
+        for st in tw["streets"]:
+            main = street_main(st["value"])
+            first = main[:1].upper()
+            by_letter.setdefault(first if first in LETTERS else "0–9", []).append((main, str(st["id"]), st["value"]))
+            by_id[str(st["id"])] = st["value"]
+        for v in by_letter.values():
+            v.sort(key=lambda x: (ua_key(x[0]), x[2]))
+        out[str(tw["id"])] = (tw["value"], by_letter, by_id)
+    return out
+
+
+def town_main(value):
+    """'м. Дніпро' -> 'Дніпро', 'с-ще Вишневе' -> 'Вишневе', 'смт Губиниха' -> 'Губиниха'."""
+    for pre in ("м. ", "с. ", "смт ", "с-ще ", "сел. "):
+        if value.startswith(pre):
+            return value[len(pre):].strip()
+    return value
+
+
+DNIPRO = load_dnipro()
 
 # ===================================================================== texts
 T = {
@@ -178,6 +212,13 @@ T = {
         "ask_street_in": "<b>{city}</b>\nТепер напишіть назву вулиці.",
         "short": "Напишіть хоча б 3 літери назви вулиці або виберіть її зі списку.",
         "b_list": "🔤 Вибрати зі списку", "b_letters": "🔤 Літери", "b_find": "🔎 Знайти вулицю",
+        "b_cities": "🏙 Міста", "b_villages": "🏘 Села та селища А–Я", "b_towns": "⬅️ Населені пункти",
+        "pick_town": "Виберіть місто або натисніть «Села та селища А–Я»:\n<i>Пошук працює для адрес ДТЕК Дніпровські електромережі.</i>",
+        "village_letter": "Виберіть першу літеру назви села чи селища:",
+        "village_page": "Села та селища на «{l}» · {p}/{n}",
+        "town_letters": "<b>{t}</b> · {n} вулиць\nВиберіть першу літеру назви вулиці:",
+        "town_page": "<b>{t}</b> · вулиці на «{l}» · {p}/{n}",
+        "town_streets": "<b>{t}</b> · виберіть вулицю:",
         "inline_kyiv": "м. Київ", "inline_hint": "Почніть писати назву вулиці…", "inline_none": "Не знайшов такої вулиці",
         "inline_none_d": "Спробуйте інакше: без «вул.» або лише частину назви",
         "pick_letter": "Виберіть першу літеру назви вулиці.\n<i>Наприклад, для «просп. Гонгадзе Георгія» — літера Г.</i>",
@@ -274,6 +315,13 @@ T = {
         "ask_street_in": "<b>{city}</b>\nNow type the street name.",
         "short": "Type at least 3 letters of the street name, or pick it from the list.",
         "b_list": "🔤 Pick from the list", "b_letters": "🔤 Letters", "b_find": "🔎 Find a street",
+        "b_cities": "🏙 Cities", "b_villages": "🏘 Villages A–Я", "b_towns": "⬅️ Towns",
+        "pick_town": "Pick a city or tap «Villages A–Я»:\n<i>Search covers addresses served by DTEK Dnipro Electric Networks.</i>",
+        "village_letter": "Pick the first letter of the village name:",
+        "village_page": "Villages starting with «{l}» · {p}/{n}",
+        "town_letters": "<b>{t}</b> · {n} streets\nPick the first letter of the street name:",
+        "town_page": "<b>{t}</b> · streets starting with «{l}» · {p}/{n}",
+        "town_streets": "<b>{t}</b> · pick your street:",
         "inline_kyiv": "Kyiv city", "inline_hint": "Start typing a street name in Ukrainian…", "inline_none": "No such street",
         "inline_none_d": "Try without «вул.» or just part of the name",
         "pick_letter": "Pick the first letter of the street name.\n<i>For example, «просп. Гонгадзе Георгія» is under Г.</i>",
@@ -828,7 +876,7 @@ class Bot:
                          {"text": "🗑", "callback_data": f"ad:{a['id']}"}])
         if len(rows) < MAX_ADDRESSES:
             add = [{"text": t["b_add"], "callback_data": "aa"}]
-            if STREETS and u["region"] == "kyiv":  # quickest way: suggestions while typing
+            if (STREETS and u["region"] == "kyiv") or (DNIPRO and u["region"] == "dnipro"):  # suggestions while typing
                 add.append({"text": t["b_find"], "switch_inline_query_current_chat": ""})
             rows.append(add)
         rows.append([{"text": t["b_back"], "callback_data": "r"}])
@@ -837,6 +885,8 @@ class Bot:
 
     def list_button(self, u):
         t = T[u["lang"]]
+        if u["region"] == "dnipro" and DNIPRO:
+            return self.dnipro_buttons(u) + [[{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}]]
         rows = ([[{"text": t["b_find"], "switch_inline_query_current_chat": ""}], [{"text": t["b_list"], "callback_data": "L"}]]
                 if STREETS and u["region"] == "kyiv" else [])
         rows.append([{"text": T[u["lang"]]["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
@@ -856,6 +906,82 @@ class Bot:
             return self.tg.send(chat_id, t["region_no_search"].format(r=region_name(u["region"], u["lang"]), url=R["dtek"]),
                                 [[{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}]])
         self.tg.send(chat_id, t["ask_city"] if R["cities"] else t["ask_street"], self.list_button(u))
+
+    # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
+    def dnipro_buttons(self, u):
+        t = T[u["lang"]]
+        return [[{"text": t["b_find"], "switch_inline_query_current_chat": ""}],
+                [{"text": t["b_cities"], "callback_data": "DT"}, {"text": t["b_villages"], "callback_data": "DV"}]]
+
+    def towns_view(self, u):
+        t = T[u["lang"]]
+        cities = sorted(((tid, v[0]) for tid, v in DNIPRO.items() if v[0].startswith("м. ")), key=lambda x: ua_key(town_main(x[1])))
+        btns = [{"text": town_main(name), "callback_data": f"DX:{tid}"} for tid, name in cities]
+        rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
+        rows.append([{"text": t["b_villages"], "callback_data": "DV"}])
+        return t["pick_town"], rows
+
+    def village_letters_view(self, u):
+        t = T[u["lang"]]
+        letters = sorted({town_main(v[0])[:1].upper() for v in DNIPRO.values() if not v[0].startswith("м. ")} & set(LETTERS),
+                         key=LETTERS.index)
+        rows = [[{"text": l, "callback_data": f"DVL:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
+        rows.append([{"text": t["b_towns"], "callback_data": "DT"}])
+        return t["village_letter"], rows
+
+    def village_page_view(self, u, letter, page):
+        t = T[u["lang"]]
+        items = sorted(((tid, v[0]) for tid, v in DNIPRO.items()
+                        if not v[0].startswith("м. ") and town_main(v[0])[:1].upper() == letter), key=lambda x: ua_key(town_main(x[1])))
+        pages = max(1, (len(items) + PAGE - 1) // PAGE)
+        page = min(max(1, page), pages)
+        rows = [[{"text": name[:60], "callback_data": f"DX:{tid}"}] for tid, name in items[(page - 1) * PAGE: page * PAGE]]
+        nav = []
+        if page > 1:
+            nav.append({"text": "◀️", "callback_data": f"DVL:{letter}:{page - 1}"})
+        nav.append({"text": f"{page}/{pages}", "callback_data": "x"})
+        if page < pages:
+            nav.append({"text": "▶️", "callback_data": f"DVL:{letter}:{page + 1}"})
+        rows += [nav, [{"text": t["b_letters"], "callback_data": "DV"}, {"text": t["b_towns"], "callback_data": "DT"}]]
+        return t["village_page"].format(l=letter, p=page, n=pages), rows
+
+    def town_view(self, u, tid):
+        """A small village: all its streets at once; a town: letters first."""
+        t = T[u["lang"]]
+        name, by_letter, by_id = DNIPRO[tid]
+        if len(by_id) <= 24:
+            streets = sorted(by_id.items(), key=lambda x: ua_key(street_main(x[1])))
+            rows = [[{"text": v[:60], "callback_data": f"DS:{tid}:{sid}"}] for sid, v in streets]
+            rows.append([{"text": t["b_towns"], "callback_data": "DT"}])
+            return t["town_streets"].format(t=html.escape(name)), rows
+        letters = [l for l in LETTERS if l in by_letter] + (["0–9"] if "0–9" in by_letter else [])
+        rows = [[{"text": l, "callback_data": f"DL:{tid}:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
+        rows.append([{"text": t["b_towns"], "callback_data": "DT"}])
+        return t["town_letters"].format(t=html.escape(name), n=len(by_id)), rows
+
+    def town_page_view(self, u, tid, letter, page):
+        t = T[u["lang"]]
+        name, by_letter, _ = DNIPRO[tid]
+        items = by_letter.get(letter, [])
+        pages = max(1, (len(items) + PAGE - 1) // PAGE)
+        page = min(max(1, page), pages)
+        rows = [[{"text": v[:60], "callback_data": f"DS:{tid}:{sid}"}] for _, sid, v in items[(page - 1) * PAGE: page * PAGE]]
+        nav = []
+        if page > 1:
+            nav.append({"text": "◀️", "callback_data": f"DL:{tid}:{letter}:{page - 1}"})
+        nav.append({"text": f"{page}/{pages}", "callback_data": "x"})
+        if page < pages:
+            nav.append({"text": "▶️", "callback_data": f"DL:{tid}:{letter}:{page + 1}"})
+        rows += [nav, [{"text": t["b_letters"], "callback_data": f"DX:{tid}"}, {"text": t["b_towns"], "callback_data": "DT"}]]
+        return t["town_page"].format(t=html.escape(name), l=letter, p=page, n=pages), rows
+
+    def pick_dnipro_street(self, chat_id, u, tid, sid, message_id=None):
+        if tid not in DNIPRO or sid not in DNIPRO[tid][2]:
+            return
+        if u["region"] != "dnipro":
+            self.set_user(chat_id, region="dnipro")
+        self.set_state(chat_id, {"city": {"id": tid, "name": DNIPRO[tid][0]}, "streets": {sid: DNIPRO[tid][2][sid]}})
+        self.pick_street(chat_id, self.user(chat_id), sid, message_id)
 
     def district_view(self, u):
         t = T[u["lang"]]
@@ -956,7 +1082,23 @@ class Bot:
             for sid in ids:
                 districts.setdefault(sid, []).append(name)
         results = []
-        if len(q) >= 2 and STREET_BY_ID:
+        region = (self.db.one("SELECT region FROM users WHERE chat_id=?", (iq.get("from", {}).get("id"),)) or {"region": "kyiv"})["region"]
+        if len(q) >= 2 and region == "dnipro" and DNIPRO:
+            ql = q.lower().replace("’", "'")
+            hits = []
+            for tid, (tname, _, by_id) in DNIPRO.items():
+                for sid, value in by_id.items():
+                    if ql in value.lower().replace("’", "'"):
+                        hits.append((not tname.startswith("м. "), not street_main(value).lower().startswith(ql), ua_key(street_main(value)), tid, sid, value, tname))
+                if len(hits) > 400:
+                    break
+            for *_, tid, sid, value, tname in sorted(hits)[:20]:
+                results.append({"type": "article", "id": f"d{tid}_{sid}", "title": value, "description": tname,
+                                "input_message_content": {"message_text": f"📍 {value} · {tname}"}})
+            if not results:
+                results.append({"type": "article", "id": "none", "title": t["inline_none"], "description": t["inline_none_d"],
+                                "input_message_content": {"message_text": q}})
+        elif len(q) >= 2 and STREET_BY_ID:
             for sid, value in self.street_matches(q):
                 where = ", ".join(districts.get(sid, [])) or t["inline_kyiv"]
                 results.append({"type": "article", "id": f"s{sid}", "title": value, "description": where,
@@ -1031,6 +1173,14 @@ class Bot:
             self.tg.send(chat_id, self.stats_text(u["lang"]))
         elif cmd.startswith("/"):
             self.tg.send(chat_id, t["help"])
+        elif m.startswith("📍") and " · " in m and DNIPRO:
+            street, _, town = m.lstrip("📍").strip().rpartition(" · ")
+            tid = next((k for k, v in DNIPRO.items() if v[0] == town), None)
+            sid = next((k for k, v in DNIPRO[tid][2].items() if v == street), None) if tid else None
+            if tid and sid:
+                self.pick_dnipro_street(chat_id, u, tid, sid)
+            else:
+                self.free_text(chat_id, u, street)
         elif m.startswith("📍") and STREET_BY_ID:
             name = m.lstrip("📍").strip()
             sid = next((k for k, v in STREET_BY_ID.items() if v == name), None)
@@ -1346,6 +1496,23 @@ class Bot:
             return self.pick_street(chat_id, self.user(chat_id), val, mid)
         if kind == "x":
             return
+        if kind == "DT":
+            return self.tg.edit(chat_id, mid, *self.towns_view(u)) if DNIPRO else None
+        if kind == "DV":
+            return self.tg.edit(chat_id, mid, *self.village_letters_view(u)) if DNIPRO else None
+        if kind == "DVL":
+            letter, _, page = val.partition(":")
+            return self.tg.edit(chat_id, mid, *self.village_page_view(u, letter, int(page) if page.isdigit() else 1))
+        if kind == "DX" and val in DNIPRO:
+            return self.tg.edit(chat_id, mid, *self.town_view(u, val))
+        if kind == "DL":
+            tid, letter, page = (val.split(":") + ["1", "1"])[:3]
+            if tid in DNIPRO:
+                return self.tg.edit(chat_id, mid, *self.town_page_view(u, tid, letter, int(page) if page.isdigit() else 1))
+            return
+        if kind == "DS":
+            tid, _, sid = val.partition(":")
+            return self.pick_dnipro_street(chat_id, u, tid, sid, mid)
         if kind == "dtek":
             return self.tg.send(chat_id, *self.dtek_view(u))
         if kind == "st":
@@ -1580,7 +1747,8 @@ class Bot:
                 with open(os.path.join(tmp, name), "wb") as f:
                     f.write(new[name])
             env = {**os.environ, "BOT_TOKEN": "", "ADMIN_CHAT_ID": "", "DATA_DIR": os.path.join(tmp, "data"),
-                   "STREETS_FILE": os.path.join(tmp, "streets.json"), "DISTRICTS_FILE": os.path.join(tmp, "districts.json")}
+                   "STREETS_FILE": os.path.join(tmp, "streets.json"), "DISTRICTS_FILE": os.path.join(tmp, "districts.json"),
+                   "DNIPRO_FILE": os.path.join(tmp, "dnipro_streets.json")}
             try:
                 res = subprocess.run([sys.executable, "-X", "utf8", os.path.join(tmp, "bot.py"), "--test"], cwd=tmp, env=env,
                                      capture_output=True, text=True, timeout=900)
@@ -1615,9 +1783,10 @@ class Bot:
         if "bot.py" in changed:
             log("restarting on the new version")
             os._exit(0)  # docker 'restart: unless-stopped' starts the new code
-        global STREETS, STREET_BY_ID, DISTRICTS
+        global STREETS, STREET_BY_ID, DISTRICTS, DNIPRO
         STREETS, STREET_BY_ID = load_streets()
         DISTRICTS = load_districts()
+        DNIPRO = load_dnipro()
 
     @staticmethod
     def safe(fn, *a):
@@ -1798,6 +1967,35 @@ def self_test():
         bot.db.q("DELETE FROM addresses WHERE chat_id=?", (C,))
         step(f"picked '{picked}' -> houses for that street", lambda: bot.text(C, picked),
              lambda s: picked.lstrip("📍 ") in s and bot.state(bot.user(C)).get("street", {}).get("name") == picked.lstrip("📍 "))
+
+    # Dnipro region: towns -> (letter) -> street -> houses, and inline search with the town shown
+    if DNIPRO:
+        Z = 6161
+        bot.user(Z, "uk")
+        bot.set_user(Z, region="dnipro")
+        cbz = lambda data: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": Z}, "message_id": 9}, "data": data})  # noqa: E731
+        step("Dnipro: add address shows town buttons", lambda: bot.ask_address(Z, bot.user(Z)),
+             lambda s: any(b.get("callback_data") == "DT" for r in tg.out[-1][3] for b in r))
+        step("Dnipro: cities", lambda: cbz("DT"), lambda s: "місто" in s)
+        tz = next(b["callback_data"][3:] for r in tg.out[-1][3] for b in r if b.get("callback_data", "").startswith("DX:"))
+        step("Dnipro: open a town", lambda: cbz(f"DX:{tz}"), lambda s: DNIPRO[tz][0] in s)
+        nxt = tg.out[-1][3][0][0]["callback_data"]
+        if nxt.startswith("DL:"):
+            step("Dnipro: a letter", lambda: cbz(nxt), lambda s: "«" in s)
+        sz = next(b["callback_data"] for r in tg.out[-1][3] for b in r if b.get("callback_data", "").startswith("DS:"))
+        step("Dnipro: pick a street -> houses", lambda: cbz(sz), lambda s: DNIPRO[tz][2][sz.split(":")[2]] in s)
+        calls_d = []
+        real_d = bot.tg.call
+        bot.tg.call = lambda method, **k: calls_d.append(k) or {}
+        bot.inline({"id": "qd", "from": {"id": Z}, "query": "Шевч"})
+        bot.tg.call = real_d
+        res_d = calls_d[-1]["results"] if calls_d else []
+        step("Dnipro: inline shows the town", lambda: tg.out.append(("send", Z, " / ".join(f"{r['title']} — {r['description']}" for r in res_d[:3]), None)),
+             lambda s: "Шевченка" in s and "м. " in s)
+        if res_d and res_d[0]["id"] != "none":
+            pick_d = res_d[0]["input_message_content"]["message_text"]
+            step("Dnipro: picked inline result -> houses", lambda: bot.text(Z, pick_d),
+                 lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
 
     # links that open a queue, and the share button
     step("link ?start=q4_1 opens queue 4.1", lambda: bot.text(5151, "/start q4_1", "uk"), lambda s: "Черга 4.1" in s)
