@@ -139,7 +139,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.23"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.24"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -547,12 +547,23 @@ def schedule(region="kyiv", force=False):
     with _sched_lock:
         if force or time.time() - sc["at"] > ttl or not sc["data"]:
             sc["at"] = time.time()
+            ok = False
             try:
                 sc["data"] = OE_READERS[src]() if src else http_json(DATA_BASE + f"{region}.json?t={int(time.time())}", timeout=30)
                 sc["ok_at"] = time.time()
+                ok = True
             except Exception as e:
                 log("schedule fetch failed:", region, e)
                 sc["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
+            # backup: YASNO's own planned outages when outage-data-ua is down or has nothing for today
+            if not src and REGIONS[region].get("yasno") and not (ok and sc["data"] and days_from_today(sc["data"], time.time())):
+                try:
+                    backup = read_yasno(*REGIONS[region]["yasno"])
+                    if days_from_today(backup, time.time()):
+                        sc["data"], sc["ok_at"], sc["at"] = backup, time.time(), time.time()
+                        log("schedule from YASNO (backup):", region)
+                except Exception as e:
+                    log("YASNO backup failed:", region, e)
         return sc["data"]
 
 
@@ -755,6 +766,30 @@ def read_pl():
         if groups:
             days[(y, m, d)] = groups
     return oe_payload(days)
+
+
+def yasno_payload(obj):
+    """YASNO planned-outages ({group: {today|tomorrow: {date, status, slots[{start, end, type}]}}}) -> our shape.
+    Only days with status ScheduleApplies count; 'Definite' slots are outages, 'Possible…' ones maybe."""
+    days = {}
+    for g, v in (obj or {}).items():
+        if not isinstance(v, dict) or not _re.fullmatch(r"\d{1,2}\.\d", str(g)):
+            continue
+        for key in ("today", "tomorrow"):
+            day = v.get(key)
+            dm = _re.match(r"(\d{4})-(\d{2})-(\d{2})", str((day or {}).get("date")))
+            if not dm or day.get("status") != "ScheduleApplies":
+                continue
+            ivs = [(int(x["start"]), int(x["end"]), "possib" in str(x.get("type")).lower())
+                   for x in day.get("slots") or [] if isinstance(x, dict) and str(x.get("type")) != "NotPlanned"
+                   and isinstance(x.get("start"), (int, float)) and isinstance(x.get("end"), (int, float))]
+            days.setdefault((int(dm[1]), int(dm[2]), int(dm[3])), {})[g] = ivs
+    return oe_payload(days)
+
+
+def read_yasno(region_id, dso_id):
+    return yasno_payload(http_json(f"https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/{region_id}"
+                                   f"/dsos/{dso_id}/planned-outages", timeout=30))
 
 
 def oe_page(url, data=None):
@@ -2672,6 +2707,17 @@ def self_test():
             pick_d = res_d[0]["input_message_content"]["message_text"]
             step("Dnipro: picked inline result -> houses", lambda: bot.text(Z, pick_d),
                  lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
+
+    # YASNO backup: planned-outages JSON -> same hours as the main source would give
+    y, mo, d = kyiv_today()
+    sample = {"4.1": {"today": {"date": f"{y}-{mo:02d}-{d:02d}T00:00:00+02:00", "status": "ScheduleApplies",
+                                "slots": [{"start": 0, "end": 90, "type": "Definite"}, {"start": 90, "end": 1440, "type": "NotPlanned"}]},
+                      "tomorrow": {"date": "2000-01-01T00:00:00+02:00", "status": "WaitingForSchedule", "slots": []}}}
+    yd = yasno_payload(sample)["fact"]["data"]
+    yday = yd.get(str(kyiv_midnight(y, mo, d)), {}).get("GPV4.1", {})
+    ok_y = len(yd) == 1 and yday.get("1") == "no" and yday.get("2") == "first" and yday.get("3") == "yes"
+    step("YASNO backup: slots -> hours, waiting day skipped", lambda: tg.out.append(("send", 1, "OK" if ok_y else f"BAD {yd}"[:200], None)),
+         lambda s: s == "OK")
 
     # regions read from the oblenergos' official APIs: pick the region, tap the queue
     for rg, co, q1 in (("mykolaiv", "Миколаївобленерго", "1.1"), ("lviv", "Львівобленерго", "1.1"),
