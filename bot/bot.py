@@ -51,13 +51,25 @@ YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2
 # Regions with DTEK schedules. yasno: (regionId, dsoId) for address search; cities: search asks for the town first.
 REGIONS = {
     "kyiv": {"uk": "м. Київ", "en": "Kyiv city", "yasno": ("25", "902"), "cities": False,
-             "dtek": "https://www.dtek-kem.com.ua/ua/shutdowns"},
+             "dtek": "https://www.dtek-kem.com.ua/ua/shutdowns",
+             "co": {"uk": "ДТЕК Київські електромережі", "en": "DTEK Kyiv Electric Networks"},
+             "phones": ["1588", "0 800 501 588"], "tg": "https://t.me/DTEKKyivskielectromerezhibot",
+             "viber": "https://chats.viber.com/dtekkyivskielectromerezhi", "city": ("1551", "https://1551.gov.ua")},
     "kyiv-region": {"uk": "Київська область", "en": "Kyiv region", "yasno": None, "cities": False,
-                    "dtek": "https://www.dtek-krem.com.ua/ua/shutdowns"},
+                    "dtek": "https://www.dtek-krem.com.ua/ua/shutdowns",
+                    "co": {"uk": "ДТЕК Київські регіональні електромережі", "en": "DTEK Kyiv Regional Electric Networks"},
+                    "phones": ["0 800 400 740", "(044) 459 07 40"], "tg": "https://t.me/DTEKKyivRegionElektromerezhiBot",
+                    "viber": None, "city": None},
     "dnipro": {"uk": "Дніпропетровська область", "en": "Dnipropetrovsk region", "yasno": ("3", "301"), "cities": True,
-               "dtek": "https://www.dtek-dnem.com.ua/ua/shutdowns"},
+               "dtek": "https://www.dtek-dnem.com.ua/ua/shutdowns",
+               "co": {"uk": "ДТЕК Дніпровські електромережі", "en": "DTEK Dnipro Electric Networks"},
+               "phones": ["0 800 301 497", "(056) 790 99 00"], "tg": "https://t.me/DTEKDniprovskiElektromerezhiBot",
+               "viber": "https://chats.viber.com/dtekdniprovskielektromerezhi", "city": None},
     "odesa": {"uk": "Одеська область", "en": "Odesa region", "yasno": None, "cities": False,
-              "dtek": "https://www.dtek-oem.com.ua/ua/shutdowns"},
+              "dtek": "https://www.dtek-oem.com.ua/ua/shutdowns",
+              "co": {"uk": "ДТЕК Одеські електромережі", "en": "DTEK Odesa Electric Networks"},
+              "phones": ["0 800 409 090", "(048) 705 90 90"], "tg": "https://t.me/DTEKOdeskiElektromerezhiBot",
+              "viber": "https://chats.viber.com/dtekodeskielektromerezhi", "city": None},
 }
 
 SCHEDULE_TTL = 300            # refresh the schedule every 5 min
@@ -79,7 +91,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.8"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.9"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -185,6 +197,16 @@ T = {
         # buttons
         "b_refresh": "🔄 Оновити", "b_site": "🌐 Сайт", "b_addr": "🏠 Адреси", "b_settings": "⚙️ Налаштування",
         "b_rep_off": "⚡ У мене немає світла", "b_rep_on": "💡 Світло є",
+        "b_dtek": "📞 Повідомити ДТЕК", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
+        "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n}",
+        "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
+        "dtek_phones": "📞 Телефони: {p}", "dtek_free": " (безкоштовно)",
+        "dtek_bots": "💬 Або через офіційний чат-бот ДТЕК — кнопки нижче.",
+        "dtek_text_title": "Готовий текст заявки (натисніть, щоб скопіювати):",
+        "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
+        "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
+        "dtek_city": "🏙 Якщо проблема не в електромережі (будинок, двір) — Контактний центр міста: {n}.",
+        "dtek_112": "🚨 Якщо через відсутність світла під загрозою життя чи здоров'я — телефонуйте 112.",
         "rep_thanks_off": "Дякую! Врахували: світла немає.", "rep_thanks_on": "Дякую! Врахували: світло є.",
         "rep_wait": "Ви вже повідомили. Можна змінити за кілька хвилин.",
         "crowd_off": "⚠️ <b>Схоже на аварійне відключення:</b> {n} з черги {q} повідомили, що світла немає, хоча за графіком воно має бути.",
@@ -265,6 +287,16 @@ T = {
         "dur": lambda h, m: f"{h} h {m:02d} min" if h else f"{m} min",
         "b_refresh": "🔄 Refresh", "b_site": "🌐 Website", "b_addr": "🏠 Addresses", "b_settings": "⚙️ Settings",
         "b_rep_off": "⚡ No power here", "b_rep_on": "💡 Power is on",
+        "b_dtek": "📞 Report to DTEK", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
+        "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n}",
+        "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
+        "dtek_phones": "📞 Phone: {p}", "dtek_free": " (free)",
+        "dtek_bots": "💬 Or use DTEK's official chatbot — buttons below.",
+        "dtek_text_title": "Ready-made text (tap to copy; DTEK works in Ukrainian):",
+        "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
+        "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
+        "dtek_city": "🏙 If the problem isn't the grid (your building or yard) — the city contact centre: {n}.",
+        "dtek_112": "🚨 If lives or health are at risk because of the outage — call 112.",
         "rep_thanks_off": "Thanks! Noted: no power.", "rep_thanks_on": "Thanks! Noted: power is on.",
         "rep_wait": "You've already reported. You can change it in a few minutes.",
         "crowd_off": "⚠️ <b>Looks like an emergency outage:</b> {n} in queue {q} reported no power, although the schedule says it should be on.",
@@ -667,11 +699,48 @@ class Bot:
         if not a:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
+                   [{"text": t["b_dtek"], "callback_data": "dtek"}],
                    [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": site_link(a["region"], a["queue"])}],
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
         text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
         line = self.crowd_line(a["region"], a["queue"], u["lang"], now)
         return (text + "\n\n" + line if line else text), buttons
+
+    def dtek_view(self, u, now=None):
+        """Official ways to report an outage, plus a ready-made text. The person sends it themselves."""
+        now = now or time.time()
+        t = T[u["lang"]]
+        a = self.active_address(u)
+        region = a["region"] if a else u["region"]
+        R = REGIONS[region]
+        phones = ", ".join(f"<b>{p}</b>" + (t["dtek_free"] if p.startswith("0 800") else "") for p in R["phones"])
+        lines = [t["dtek_title"].format(co=R["co"][u["lang"]]), "", t["dtek_phones"].format(p=phones), t["dtek_bots"]]
+        if a:
+            since = ""
+            rep_row = self.db.one("SELECT at FROM reports WHERE chat_id=? AND region=? AND queue=? AND state='off' AND at>=?",
+                                  (u["chat_id"], region, a["queue"], int(now - REPORT_TTL)))
+            data = schedule(region)
+            days = days_from_today(data, now) if data else []
+            if rep_row and days and days[0][0] <= now:
+                since = t["dtek_since"].format(t=fmt((rep_row["at"] - days[0][0]) / 60))
+            sched = t["dtek_sched"] if self.scheduled_now(region, a["queue"], now) == "+" else ""
+            town = "м. Київ, " if region == "kyiv" else ""
+            queue_only = a["label"] in (T["uk"]["queue_label"].format(q=a["queue"]), T["en"]["queue_label"].format(q=a["queue"]))
+            addr = town + ("[вкажіть адресу]" if queue_only else a["label"])
+            text = t["dtek_text"].format(addr=html.escape(addr), q=a["queue"], since=since, sched=sched)
+            lines += ["", t["dtek_text_title"], f"<code>{text}</code>"]
+        lines.append("")
+        if R.get("city"):
+            lines.append(t["dtek_city"].format(n=f"<b>{R['city'][0]}</b>"))
+        lines.append(t["dtek_112"])
+        rows = [[{"text": t["b_dtek_tg"], "url": R["tg"]}]]
+        if R.get("viber"):
+            rows.append([{"text": t["b_dtek_viber"], "url": R["viber"]}])
+        rows.append([{"text": t["b_dtek_site"], "url": R["dtek"].rsplit("/ua/", 1)[0] + "/ua"}])
+        if R.get("city"):
+            rows.append([{"text": t["b_city"].format(n=R["city"][0]), "url": R["city"][1]}])
+        rows.append([{"text": t["b_back"], "callback_data": "r"}])
+        return "\n".join(lines), rows
 
     # ---------- people's reports
     def crowd(self, region, queue, now=None):
@@ -1179,6 +1248,8 @@ class Bot:
             return self.pick_street(chat_id, self.user(chat_id), val, mid)
         if kind == "x":
             return
+        if kind == "dtek":
+            return self.tg.send(chat_id, *self.dtek_view(u))
         if kind == "st":
             return self.tg.edit(chat_id, mid, *self.settings_view(u))
         if kind in ("sn", "sr", "sq", "sw", "sl"):
@@ -1277,7 +1348,8 @@ class Bot:
                         t2 = T[s["lang"]]
                         self.tg.send(cid, t2["crowd_alert"].format(q=qn, n=t2["people"](c_off)) + tag,
                                      [[{"text": t2["b_rep_off"], "callback_data": "rp:off"},
-                                       {"text": t2["b_rep_on"], "callback_data": "rp:on"}]])
+                                       {"text": t2["b_rep_on"], "callback_data": "rp:on"}],
+                                      [{"text": t2["b_dtek"], "callback_data": "dtek"}]])
                 for ev, mark in events:
                     if not self.mark(cid, f"{mark}:{s['aid']}"):
                         continue
@@ -1631,6 +1703,23 @@ def self_test():
          lambda s: s == "")
     step("button press via callback", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": D}, "message_id": 5}, "data": "rp:on"}),
          lambda s: "Черга 4.1" in s)
+
+    # report to DTEK: official contacts + ready-made text; the person sends it
+    step("status has 'Report to DTEK'", lambda: tg.out.append(("send", A, " ".join(b["text"] for r in bot.status_view(bot.user(A))[1] for b in r), None)),
+         lambda s: "Повідомити ДТЕК" in s)
+    step("DTEK view: Kyiv contacts + text", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": A}, "message_id": 6}, "data": "dtek"}),
+         lambda s: "Повідомити ДТЕК Київські електромережі" in s)
+    print("     ", [b.get("url") for r in tg.out[-1][3] for b in r if b.get("url")])
+    print("     ", [ln for ln in tg.out[-1][2].split("\n") if ln.startswith(("📞", "<code>"))])
+    for rg, ph in (("kyiv-region", "0 800 400 740"), ("dnipro", "0 800 301 497"), ("odesa", "0 800 409 090")):
+        E = 9100 + len(rg)
+        bot.user(E, "uk")
+        bot.set_user(E, region=rg)
+        bot.add_address(E, "Черга 1.1", "1.1", rg)
+        v = bot.dtek_view(bot.user(E))[0]
+        good = ph in v and "[вкажіть адресу]" in v and "1551" not in v
+        step(f"DTEK view: {rg} ({ph}, no 1551)", lambda: tg.out.append(("send", E, "OK" if good else "BAD " + v[-200:], None)),
+             lambda s: s == "OK")
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return ok
 
