@@ -101,6 +101,9 @@ REGIONS = {
                  "dtek": "https://www.cherkasyoblenergo.com", "co": {"uk": "Черкасиобленерго", "en": "Cherkasyoblenergo"},
                  "phones": ["0 800 501 328", "093 170 40 57"], "tg": "https://t.me/Cherkasyoblenergo_bot",
                  "viber": "https://chats.viber.com/cherkasyoblenergo", "city": None},
+    "poltava": {"uk": "Полтавська область", "en": "Poltava region", "yasno": None, "cities": False, "source": "pl",
+                "dtek": "https://www.poe.pl.ua/disconnection/power-outages/", "co": {"uk": "Полтаваобленерго", "en": "Poltavaoblenergo"},
+                "phones": ["0 800 205 035", "(0532) 510-910"], "tg": "https://t.me/PltOblEnergo_bot", "viber": None, "city": None},
 }
 STANDARD_GROUPS = [f"{q}.{s_}" for q in range(1, 7) for s_ in (1, 2)]
 OE_TTL = 600  # official oblenergo APIs: every 10 minutes is plenty and stays polite
@@ -124,7 +127,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.21"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.22"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -218,7 +221,7 @@ DNIPRO = load_dnipro()
 # ===================================================================== texts
 T = {
     "uk": {
-        "welcome": "Привіт! Я показую графік відключень світла у Києві та областях — Київській, Дніпропетровській, Одеській, Львівській, Миколаївській, Івано-Франківській і Черкаській (/region).\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
+        "welcome": "Привіт! Я показую графік відключень світла у Києві та областях — Київській, Дніпропетровській, Одеській, Львівській, Миколаївській, Івано-Франківській, Черкаській і Полтавській (/region).\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
         "ask_street": "Напишіть назву вулиці українською, наприклад <b>Хрещатик</b>.",
         "help": "Що я вмію:\n/now — графік зараз\n/address — мої адреси (до 5)\n/region — вибрати регіон\n/settings — нагадування й мова\n/queue 4.1 — додати чергу вручну\n\nНапишіть назву вулиці, щоб додати адресу.",
         "b_region": "📍 Регіон: {r}", "pick_region": "Виберіть регіон. Графіки — з офіційних джерел ДТЕК та обленерго:",
@@ -329,7 +332,7 @@ T = {
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
-        "welcome": "Hi! I show power outage schedules for Kyiv and the Kyiv, Dnipropetrovsk, Odesa, Lviv, Mykolaiv, Ivano-Frankivsk and Cherkasy regions (/region).\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
+        "welcome": "Hi! I show power outage schedules for Kyiv and the Kyiv, Dnipropetrovsk, Odesa, Lviv, Mykolaiv, Ivano-Frankivsk, Cherkasy and Poltava regions (/region).\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
         "ask_street": "Type the street name in Ukrainian, for example <b>Хрещатик</b>.",
         "help": "What I can do:\n/now — schedule now\n/address — my addresses (up to 5)\n/region — choose the region\n/settings — reminders and language\n/queue 4.1 — add a queue manually\n\nType a street name to add an address.",
         "b_region": "📍 Region: {r}", "pick_region": "Pick your region. Schedules come from DTEK and the oblenergos' official sources:",
@@ -704,7 +707,45 @@ def read_ck():
     return oe_payload(days)
 
 
-OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck}
+def kyiv_today(offset_days=0):
+    """(y, m, d) of today (or a later day) in Kyiv."""
+    now = time.time() + offset_days * 86400
+    g = time.gmtime(now + 2 * 3600)
+    if now >= kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday) + 86400:  # summer time already past midnight
+        g = time.gmtime(now + 3 * 3600)
+    return g.tm_year, g.tm_mon, g.tm_mday
+
+
+def read_pl():
+    """Poltavaoblenergo: POST newgpv-info.php with the date; the first table.gpv-table is that day,
+    a row per subqueue with 48 half-hour cells (gpv-s1 on, gpv-s2 off, gpv-s3 maybe: switching time)."""
+    days = {}
+    for k in (0, 1):
+        y, m, d = kyiv_today(k)
+        body = urllib.parse.urlencode({"seldate": json.dumps({"date_in": f"{d:02d}-{m:02d}-{y}"})}).encode()
+        req = urllib.request.Request("https://www.poe.pl.ua/customs/newgpv-info.php", data=body,
+                                     headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            page = r.read(2_000_000).decode("utf-8", "replace")
+        tm = _re.search(r'<table[^>]*class="[^"]*gpv-table[^"]*"[^>]*>(.*?)</table>', page, _re.S)
+        if not tm:
+            continue
+        groups = {}
+        for g, rest in _re.findall(r'<td[^>]*gpv-q[^>]*>\s*([1-6]\.[12])\s*</td>(.*?)</tr>', tm.group(1), _re.S):
+            cells = _re.findall(r'<td[^>]*class="([^"]*gpv-c[^"]*)"', rest)
+            if len(cells) != 48:
+                continue
+            ivs = []
+            for i, c in enumerate(cells):
+                if "gpv-s2" in c or "gpv-s3" in c:
+                    ivs.append((i * 30, i * 30 + 30, "gpv-s3" in c))
+            groups[g] = ivs
+        if groups:
+            days[(y, m, d)] = groups
+    return oe_payload(days)
+
+
+OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl}
 
 
 def region_groups(region, data=None):
@@ -2507,7 +2548,7 @@ def self_test():
 
     # regions read from the oblenergos' official APIs: pick the region, tap the queue
     for rg, co in (("mykolaiv", "Миколаївобленерго"), ("lviv", "Львівобленерго"), ("ivano-frankivsk", "Прикарпаттяобленерго"),
-                   ("cherkasy", "Черкасиобленерго")):
+                   ("cherkasy", "Черкасиобленерго"), ("poltava", "Полтаваобленерго")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
