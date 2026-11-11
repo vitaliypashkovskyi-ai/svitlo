@@ -89,17 +89,18 @@ REGIONS = {
     # read straight from each oblenergo's official API ("source"); no address search there
     "lviv": {"uk": "Львівська область", "en": "Lviv region", "yasno": None, "cities": False, "source": "loe", "lookup": "loe",
              "dtek": "https://poweron.loe.lviv.ua", "co": {"uk": "Львівобленерго", "en": "Lvivoblenergo"},
-             "phones": [], "tg": None, "viber": None, "city": None},
+             "phones": ["0 800 30 15 68"], "tg": "https://t.me/loeserviceBot", "viber": "https://www.viber.com/loebot", "city": None},
     "mykolaiv": {"uk": "Миколаївська область", "en": "Mykolaiv region", "yasno": None, "cities": False, "source": "mk", "lookup": "mk",
                  "dtek": "https://off.energy.mk.ua", "co": {"uk": "Миколаївобленерго", "en": "Mykolaivoblenergo"},
-                 "phones": [], "tg": None, "viber": None, "city": None},
+                 "phones": ["(067) 690 40 09", "(093) 170 30 79"], "tg": "https://t.me/mykolaivoblenergo_bot", "viber": None, "city": None},
     "ivano-frankivsk": {"uk": "Івано-Франківська область", "en": "Ivano-Frankivsk region", "yasno": None, "cities": False,
                         "source": "if", "dtek": "https://svitlo.oe.if.ua",
                         "co": {"uk": "Прикарпаттяобленерго", "en": "Prykarpattiaoblenergo"},
-                        "phones": [], "tg": None, "viber": None, "city": None},
+                        "phones": ["0 800 50 40 20"], "tg": "https://t.me/oeifuabot", "viber": None, "city": None},
     "cherkasy": {"uk": "Черкаська область", "en": "Cherkasy region", "yasno": None, "cities": False, "source": "ck",
                  "dtek": "https://www.cherkasyoblenergo.com", "co": {"uk": "Черкасиобленерго", "en": "Cherkasyoblenergo"},
-                 "phones": [], "tg": None, "viber": None, "city": None},
+                 "phones": ["0 800 501 328", "093 170 40 57"], "tg": "https://t.me/Cherkasyoblenergo_bot",
+                 "viber": "https://chats.viber.com/cherkasyoblenergo", "city": None},
 }
 STANDARD_GROUPS = [f"{q}.{s_}" for q in range(1, 7) for s_ in (1, 2)]
 OE_TTL = 600  # official oblenergo APIs: every 10 minutes is plenty and stays polite
@@ -123,7 +124,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.20"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.21"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -283,11 +284,11 @@ T = {
         "mk_level": {"ns": "Виберіть населений пункт", "street": "Виберіть вулицю"},
         "mk_letters": "{what}: виберіть першу літеру або напишіть назву.", "mk_page": "{what} · {p}/{n}", "b_back_level": "⬅️ Назад",
         "loe_no_queue": "Для будинку {h} {co} не вказує черги графіка ({v}). Виберіть чергу кнопками або перевірте на сайті {co}.",
-        "loe_busy": "Довідник адрес {co} зараз не відповідає. Спробуйте за хвилину або виберіть чергу кнопками.", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
+        "loe_busy": "Довідник адрес {co} зараз не відповідає. Спробуйте за хвилину або виберіть чергу кнопками.", "b_dtek_tg": "💬 Чат-бот {co} (Telegram)", "b_dtek_viber": "💬 Viber {co}",
         "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
         "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
         "dtek_phones": "📞 Телефони: {p}", "dtek_free": " (безкоштовно)",
-        "dtek_bots": "💬 Або через офіційний чат-бот ДТЕК — кнопки нижче.", "oe_site": "🌐 Подати звернення можна на офіційному сайті — кнопка нижче.",
+        "dtek_bots": "💬 Або через офіційний чат-бот {co} — кнопки нижче.", "oe_site": "🌐 Подати звернення можна на офіційному сайті — кнопка нижче.",
         "dtek_text_title": "Готовий текст заявки (натисніть, щоб скопіювати):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
@@ -393,11 +394,11 @@ T = {
         "mk_level": {"ns": "Pick the town or village", "street": "Pick the street"},
         "mk_letters": "{what}: pick the first letter or type the name.", "mk_page": "{what} · {p}/{n}", "b_back_level": "⬅️ Back",
         "loe_no_queue": "{co} lists no schedule queue for house {h} ({v}). Pick the queue with the buttons or check on the {co} website.",
-        "loe_busy": "The {co} address directory isn't responding. Try again in a minute or pick the queue with the buttons.", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
+        "loe_busy": "The {co} address directory isn't responding. Try again in a minute or pick the queue with the buttons.", "b_dtek_tg": "💬 {co} chatbot (Telegram)", "b_dtek_viber": "💬 {co} on Viber",
         "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
         "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
         "dtek_phones": "📞 Phone: {p}", "dtek_free": " (free)",
-        "dtek_bots": "💬 Or use DTEK's official chatbot — buttons below.", "oe_site": "🌐 You can file a report on the official website — button below.",
+        "dtek_bots": "💬 Or use the official {co} chatbot — buttons below.", "oe_site": "🌐 You can file a report on the official website — button below.",
         "dtek_text_title": "Ready-made text (tap to copy; DTEK works in Ukrainian):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
@@ -1007,7 +1008,8 @@ class Bot:
         lines = [t["dtek_title"].format(co=R["co"][u["lang"]]), ""]
         if R["phones"]:
             lines.append(t["dtek_phones"].format(p=phones))
-        lines.append(t["dtek_bots"] if R.get("tg") else t["oe_site"])
+        co_short = "ДТЕК" if not R.get("source") else R["co"][u["lang"]]
+        lines.append(t["dtek_bots"].format(co=co_short) if R.get("tg") else t["oe_site"])
         if a:
             since = ""
             rep_row = self.db.one("SELECT at FROM reports WHERE chat_id=? AND region=? AND queue=? AND state='off' AND at>=?",
@@ -1026,9 +1028,9 @@ class Bot:
         if R.get("city"):
             lines.append(t["dtek_city"].format(n=f"<b>{R['city'][0]}</b>", site=R["city"][2]))
         lines.append(t["dtek_112"])
-        rows = [[{"text": t["b_dtek_tg"], "url": R["tg"]}]] if R.get("tg") else []
+        rows = [[{"text": t["b_dtek_tg"].format(co=co_short), "url": R["tg"]}]] if R.get("tg") else []
         if R.get("viber"):
-            rows.append([{"text": t["b_dtek_viber"], "url": R["viber"]}])
+            rows.append([{"text": t["b_dtek_viber"].format(co=co_short), "url": R["viber"]}])
         if R.get("source"):  # an oblenergo: its own site as is
             rows.append([{"text": "🌐 " + R["co"][u["lang"]], "url": R["dtek"]}])
         else:
