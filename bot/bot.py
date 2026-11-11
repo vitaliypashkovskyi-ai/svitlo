@@ -91,7 +91,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.13"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.14"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -799,7 +799,10 @@ class Bot:
             rows.append([{"text": f"{mark}{a['label'][:36]} · {a['queue']}{where}", "callback_data": f"as:{a['id']}"},
                          {"text": "🗑", "callback_data": f"ad:{a['id']}"}])
         if len(rows) < MAX_ADDRESSES:
-            rows.append([{"text": t["b_add"], "callback_data": "aa"}])
+            add = [{"text": t["b_add"], "callback_data": "aa"}]
+            if STREETS and u["region"] == "kyiv":  # quickest way: suggestions while typing
+                add.append({"text": t["b_find"], "switch_inline_query_current_chat": ""})
+            rows.append(add)
         rows.append([{"text": t["b_back"], "callback_data": "r"}])
         text = t["addr_title"].format(n=MAX_ADDRESSES) + ("" if len(rows) > 2 else "\n\n" + t["addr_empty"])
         return text, rows
