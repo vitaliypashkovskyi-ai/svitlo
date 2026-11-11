@@ -24,6 +24,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import struct
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -116,6 +118,10 @@ REGIONS = {
     "kirovohrad": {"uk": "Кіровоградська область", "en": "Kirovohrad region", "yasno": None, "cities": False, "source": "kr",
                    "dtek": "https://kiroe.com.ua/energy/emergency", "co": {"uk": "Кіровоградобленерго", "en": "Kirovohradoblenergo"},
                    "phones": ["0 800 501 148"], "tg": None, "viber": None, "city": None},
+    "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe",
+              "dtek": "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
+              "co": {"uk": "Волиньобленерго", "en": "Volynoblenergo"},
+              "phones": ["(0332) 78-48-48", "(068) 478-48-48", "(095) 478-48-48"], "tg": None, "viber": None, "city": None},
     "chernivtsi": {"uk": "Чернівецька область", "en": "Chernivtsi region", "yasno": None, "cities": False, "source": "cv",
                    "groups": [str(i) for i in range(1, 13)],  # 12 queues, no subqueues
                    "dtek": "https://oblenergo.cv.ua/shutdowns/", "co": {"uk": "Чернівціобленерго", "en": "Chernivtsioblenergo"},
@@ -143,7 +149,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.1"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.2"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -948,8 +954,170 @@ def read_kr():
     return oe_payload(dict(sorted(days.items())[-3:]))
 
 
+# ---- Volynoblenergo: the schedule is only a picture (two 12x24 grids of half-hour cells), read by cell colour
+def png_rgb(data):
+    """8-bit RGB/RGBA non-interlaced PNG -> (width, height, [row bytes as RGB])."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    pos, idat, ihdr = 8, [], None
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if kind == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat.append(body)
+        elif kind == b"IEND":
+            break
+        pos += 12 + n
+    w, h, depth, ctype, _, _, interlace = ihdr
+    if depth != 8 or ctype not in (2, 6) or interlace:
+        raise ValueError(f"unsupported PNG {ihdr}")
+    bpp = 3 if ctype == 2 else 4
+    raw = zlib.decompress(b"".join(idat))
+    stride = w * bpp
+    rows, prev = [], bytes(stride)
+    for y in range(h):
+        f = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        if f == 1:
+            for i in range(bpp, stride):
+                line[i] = (line[i] + line[i - bpp]) & 255
+        elif f == 2:
+            line = bytearray((a + b) & 255 for a, b in zip(line, prev))
+        elif f == 3:
+            for i in range(stride):
+                line[i] = (line[i] + ((line[i - bpp] if i >= bpp else 0) + prev[i]) // 2) & 255
+        elif f == 4:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i - bpp] if i >= bpp else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        prev = bytes(line)
+        rows.append(prev if bpp == 3 else bytes(b for i, b in enumerate(prev) if i % 4 != 3))
+    return w, h, rows
+
+
+
+VOE_ON, VOE_OFF = (185, 200, 215), (68, 110, 155)
+_VOE_INK = bytes(1 if v < 236 else 0 for v in range(256))
+
+
+def _voe_runs(flags):
+    out, start = [], None
+    for i, f in enumerate(list(flags) + [False]):
+        if f and start is None:
+            start = i
+        elif not f and start is not None:
+            out.append((start, i))
+            start = None
+    return out
+
+
+def _voe_even(spans):
+    sizes = [b - a for a, b in spans]
+    return min(sizes) >= 30 and max(sizes) - min(sizes) <= 4 and all(spans[i + 1][0] - spans[i][1] <= 8 for i in range(len(spans) - 1))
+
+
+def _voe_near(c, ref, tol=24):
+    return all(abs(a - b) <= tol for a, b in zip(c, ref))
+
+
+def voe_grid(png):
+    """{group: [48 bools, True = no power]} from a Volynoblenergo schedule PNG, or None if the picture
+    isn't the expected two 12x24 grids in the expected colours (then nothing is shown rather than a guess)."""
+    w, h, rows = png_rgb(png)
+    px = lambda x, y: tuple(rows[y][3 * x:3 * x + 3])  # noqa: E731
+    reds = [r[0::3] for r in rows]  # the table is bluish: red < 236 is ink, the lines between cells are white
+    counts = [bytes(col).translate(_VOE_INK).count(1) for col in zip(*reds)]
+    cols = _voe_runs(c > max(counts) // 2 for c in counts)
+    if len(cols) != 26:
+        return None
+    label, cols = cols[1], cols[2:]
+    if not _voe_even(cols):
+        return None
+    xs = [label[0] + 3] + [a + 3 for a, _ in cols]
+    bands = _voe_runs(all(reds[y][x] < 236 for x in xs) for y in range(h))
+    if len(bands) != 26:
+        return None
+    halves = []
+    for grid in (bands[:13], bands[13:]):
+        header, body = grid[0], grid[1:]
+        if not _voe_even(body) or body[0][0] - header[1] > 8:
+            return None
+        mid = (header[0] + header[1]) // 2
+        if not all(_voe_near(px(label[0] + 3, (a + b) // 2), VOE_ON) for a, b in body):
+            return None
+        if not all(_voe_near(px(a + 3, mid), VOE_OFF) for a, _ in cols):
+            return None
+        halves.append(body)
+    out = {}
+    for i, g in enumerate(f"{q}.{s_}" for q in range(1, 7) for s_ in (1, 2)):
+        cells = []
+        for body in halves:
+            y0, y1 = body[i][0] + 6, body[i][1] - 6
+            for x0, x1 in cols:
+                x0, x1 = x0 + 6, x1 - 6
+                pts = [px(x0 + (x1 - x0) * fx // 4, y0 + (y1 - y0) * fy // 4) for fx in range(5) for fy in range(5)]
+                if all(_voe_near(p, VOE_OFF) for p in pts):
+                    cells.append(True)
+                elif all(_voe_near(p, VOE_ON) for p in pts):
+                    cells.append(False)
+                else:
+                    return None
+        out[g] = cells
+    return out
+
+
+VOE_API = "https://api-voe-poweron.inneti.net"
+_voe_cache = {}  # image path -> grid (or None if the picture didn't look as expected); paths change on every upload
+
+
+def read_voe():
+    """Volynoblenergo: the images on show (options pw_gpv_image_today/tomorrow), dated by the archive."""
+    keys = ("pw_gpv_image_today", "pw_gpv_image_tomorrow")
+    opts = oe_get(f"{VOE_API}/api/options?" + "&".join(f"option_key[]={k}" for k in keys))
+    paths = [str(x.get("value")) for x in opts if isinstance(x, dict) and x.get("option_key") in keys
+             and _re.fullmatch(r"/media/[\w/.-]{1,120}\.png", str(x.get("value") or ""))]
+    days = {}
+    if not paths:
+        return oe_payload(days)
+    y, m, d = kyiv_today(-1)
+    arch = oe_get(f"{VOE_API}/api/archive_gpv_graphs?dateGraph[after]={y}-{m:02d}-{d:02d}")
+    day_of = {}
+    for x in arch if isinstance(arch, list) else []:
+        img = x.get("imageUrl") if isinstance(x, dict) else None
+        dm = _re.match(r"(\d{4})-(\d{2})-(\d{2})", str(x.get("dateGraph"))) if isinstance(img, dict) else None
+        if dm and img.get("contentUrl"):
+            day_of[img["contentUrl"]] = (int(dm[1]), int(dm[2]), int(dm[3]))  # Kyiv wall-clock day
+    for path in paths:
+        day = day_of.get(path)
+        if not day:
+            continue  # an older day's picture still on show, or not archived yet
+        if path not in _voe_cache:
+            req = urllib.request.Request(VOE_API + path, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                png = r.read(8_000_000)
+            try:
+                _voe_cache[path] = voe_grid(png)
+            except Exception as e:
+                log("Volyn picture unreadable:", path, repr(e))
+                _voe_cache[path] = None
+            if _voe_cache[path] is None:
+                log("Volyn picture doesn't look as expected:", path)
+            while len(_voe_cache) > 8:
+                _voe_cache.pop(next(iter(_voe_cache)))
+        grid = _voe_cache[path]
+        if grid:
+            days[day] = {g: [(i * 30, i * 30 + 30, False) for i, off in enumerate(cells) if off] for g, cells in grid.items()}
+    return oe_payload(days)
+
+
 OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
-              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr}
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe}
 
 
 def region_groups(region, data=None):
@@ -2888,6 +3056,18 @@ def self_test():
     bot.set_user(7300, region="chernivtsi")
     step("chernivtsi: /queue 7 stays 7", lambda: bot.text(7300, "/queue 7"), lambda s: "Черга 7</b>" in s)
 
+    # Volyn: a known archived picture (17.10.2026, 16:21) read cell by cell; skipped if the archive is gone
+    try:
+        req = urllib.request.Request(VOE_API + "/media/2026/10/6ad37651be5c4_GPV.png", headers={"User-Agent": "svitlo-kyiv-bot/1.0"})
+        vg = voe_grid(urllib.request.urlopen(req, timeout=60).read())
+        spans = lambda c: [i for i, off in enumerate(c) if off]  # noqa: E731
+        ok_v = (vg is not None and spans(vg["1.1"]) == list(range(20, 28)) + [42, 43] and spans(vg["2.2"]) == list(range(29, 36)) + [42, 43]
+                and spans(vg["6.1"]) == list(range(36, 44)) and not any(vg["5.1"][:35]))
+        step("Volyn: archived picture -> outages", lambda: tg.out.append(("send", 1, "OK" if ok_v else f"BAD {vg and vg.get('1.1')}", None)),
+             lambda s: s == "OK")
+    except urllib.error.URLError as e:
+        print("     Volyn picture test skipped:", e)
+
     # YASNO backup: planned-outages JSON -> same hours as the main source would give
     y, mo, d = kyiv_today()
     sample = {"4.1": {"today": {"date": f"{y}-{mo:02d}-{d:02d}T00:00:00+02:00", "status": "ScheduleApplies",
@@ -2904,7 +3084,7 @@ def self_test():
                        ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
                        ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
                        ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
-                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
+                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
