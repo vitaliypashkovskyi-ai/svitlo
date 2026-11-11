@@ -45,6 +45,7 @@ load_env()
 TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(HERE, "data"))
+CHANNEL = os.environ.get("CHANNEL", "@LightUkraine").strip()  # public channel for the daily digests; empty = off
 SITE_URL = os.environ.get("SITE_URL", "").strip()  # the public site was taken down on 2026-11-11
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "LightUkraine_bot").strip().lstrip("@")  # refreshed from getMe at start
 
@@ -139,7 +140,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.24"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.25"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1596,8 +1597,8 @@ class Bot:
         elif cmd == "/settings":
             self.tg.send(chat_id, *self.settings_view(u))
         elif cmd == "/queue":
-            q = norm_queue(arg)
             data = schedule(u["region"])
+            q = arg.strip() if arg.strip() in region_groups(u["region"], data) else norm_queue(arg)
             days = days_from_today(data, time.time()) if data else []
             if not q or q not in region_groups(u["region"], data):
                 self.tg.send(chat_id, t["bad_queue"])
@@ -2253,6 +2254,8 @@ class Bot:
                     for p in self.db.q("SELECT * FROM pending ORDER BY at"):
                         self.tg.send(p["chat_id"], p["text"])
                         self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
+        if CHANNEL and not isinstance(self.tg, FakeTG):  # the self-test calls channel_tick itself
+            self.safe(self.channel_tick, now)
         self.db.q("DELETE FROM sent WHERE at < ?", (int(now) - 3 * 86400,))
         self.db.q("DELETE FROM reports WHERE at < ?", (int(now) - 86400,))
 
@@ -2331,6 +2334,63 @@ class Bot:
                     else:
                         self.tg.send(cid, text)
 
+
+    # ---------- channel: an intro once, then 07:00 'today' and 22:00 'tomorrow' digests for all regions
+    def channel_digest(self, day_mid, title, now):
+        lines = []
+        for region in REGIONS:
+            data = schedule(region)
+            groups = (data or {}).get("fact", {}).get("data", {}).get(str(day_mid)) if data else None
+            name = region_name(region, "uk")
+            if not groups:
+                lines.append(f"<b>{name}</b> — графік ще не опубліковано")
+                continue
+            offs = []
+            for hours in groups.values():
+                st = slots(hours)
+                offs.append(st.count("-") * 30)
+            hi, lo = max(offs), min(offs)
+            if hi == 0:
+                lines.append(f"<b>{name}</b> — відключень не заплановано")
+                continue
+            h = lambda m: f"{m / 60:g}".replace(".", ",")  # noqa: E731
+            span = f"до {h(hi)} год" if lo == 0 or lo == hi else f"від {h(lo)} до {h(hi)} год"
+            lines.append(f"<b>{name}</b> — {span} без світла")
+        y, m, d = time.gmtime(day_mid + 12 * 3600)[:3]
+        month = next(k for k, v in UA_MONTHS.items() if v == m)
+        text = (f"{title}, <b>{d} {month}</b>\n\n" + "\n".join(lines)
+                + "\n\n<i>За даними обленерго та ДТЕК. Розклад своєї черги, сповіщення перед відключенням "
+                  "і пошук черги за адресою — у боті:</i>")
+        return text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+
+    def channel_post(self, text, buttons=None):
+        """True when posted. On failure tells the admin, at most once an hour."""
+        if isinstance(self.tg, FakeTG):
+            self.tg.send(CHANNEL, text, buttons)
+            return True
+        if self.tg.send(CHANNEL, text, buttons) is not None:
+            return True
+        if self.mark(0, f"chan:fail:{int(time.time() // 3600)}"):
+            self.admin(f"Не вдалося опублікувати в {CHANNEL}. Перевірте, що бот — адміністратор каналу з правом публікувати.")
+        return False
+
+    def channel_tick(self, now=None):
+        now = now or time.time()
+        today = kyiv_midnight(*kyiv_today())
+        mins = (now - today) / 60
+        if not self.db.one("SELECT 1 FROM cache WHERE key=?", ("chan:intro",)) and self.channel_post("💡 <b>Світло — графіки відключень по Україні</b>\n\n"
+                              "Щодня о 07:00 — графіки на сьогодні, о 22:00 — на завтра, для всіх областей, "
+                              "де обленерго публікують їх у відкритому доступі.\n\n"
+                              "У боті можна вибрати свою чергу або знайти її за адресою, отримувати сповіщення "
+                              "перед відключенням і повідомити, якщо світла немає поза графіком.",
+                              [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}"}]]):
+            self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, int(now)))
+        if 7 * 60 <= mins < 7 * 60 + 30 and self.mark(0, f"chan:today:{today}"):
+            self.channel_post(*self.channel_digest(today, "☀️ Графіки відключень на сьогодні", now))
+        if 22 * 60 <= mins < 22 * 60 + 30:
+            tomorrow = kyiv_midnight(*kyiv_today(1))
+            if self.mark(0, f"chan:tom:{tomorrow}"):
+                self.channel_post(*self.channel_digest(tomorrow, "🌙 Графіки відключень на завтра", now))
 
     def mark(self, chat_id, mark):
         """True the first time a mark is seen for this chat (so each reminder is sent once)."""
@@ -2707,6 +2767,21 @@ def self_test():
             pick_d = res_d[0]["input_message_content"]["message_text"]
             step("Dnipro: picked inline result -> houses", lambda: bot.text(Z, pick_d),
                  lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
+
+    # channel: intro once, 07:00 digest once
+    t7 = kyiv_midnight(*kyiv_today()) + 7 * 3600 + 300
+    n0 = len(tg.out)
+    bot.channel_tick(t7)
+    posts = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    bot.channel_tick(t7 + 60)
+    again = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    ok_ch = (len(posts) == 2 and "Світло" in posts[0][2] and "на сьогодні" in posts[1][2] and "Львівська область" in posts[1][2]
+             and len(again) == 2 and posts[1][3][0][0]["url"].startswith("https://t.me/"))
+    print("     channel digest:", posts[1][2][:600].replace("\n", " | ") if len(posts) > 1 else posts)
+    step("channel: intro + today's digest once", lambda: tg.out.append(("send", 1, "OK" if ok_ch else "BAD", None)), lambda s: s == "OK")
+    u7 = bot.user(7300, "uk")
+    bot.set_user(7300, region="chernivtsi")
+    step("chernivtsi: /queue 7 stays 7", lambda: bot.text(7300, "/queue 7"), lambda s: "Черга 7</b>" in s)
 
     # YASNO backup: planned-outages JSON -> same hours as the main source would give
     y, mo, d = kyiv_today()
