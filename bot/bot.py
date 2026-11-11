@@ -91,7 +91,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.11"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.13"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -161,7 +161,9 @@ T = {
         "pick_city": "Виберіть населений пункт:", "no_cities": "Не знайшов такого населеного пункту. Напишіть хоча б 3 літери назви.",
         "ask_street_in": "<b>{city}</b>\nТепер напишіть назву вулиці.",
         "short": "Напишіть хоча б 3 літери назви вулиці або виберіть її зі списку.",
-        "b_list": "🔤 Вибрати зі списку", "b_letters": "🔤 Літери",
+        "b_list": "🔤 Вибрати зі списку", "b_letters": "🔤 Літери", "b_find": "🔎 Знайти вулицю",
+        "inline_kyiv": "м. Київ", "inline_hint": "Почніть писати назву вулиці…", "inline_none": "Не знайшов такої вулиці",
+        "inline_none_d": "Спробуйте інакше: без «вул.» або лише частину назви",
         "pick_letter": "Виберіть першу літеру назви вулиці.\n<i>Наприклад, для «просп. Гонгадзе Георгія» — літера Г.</i>",
         "letter_page": "Вулиці на «{l}» · сторінка {p} з {n}",
         "no_streets": "Не знайшов такої вулиці. Спробуйте без «вул.» або лише частину назви.",
@@ -252,7 +254,9 @@ T = {
         "pick_city": "Pick the town or village:", "no_cities": "No such town found. Type at least 3 letters of the name.",
         "ask_street_in": "<b>{city}</b>\nNow type the street name.",
         "short": "Type at least 3 letters of the street name, or pick it from the list.",
-        "b_list": "🔤 Pick from the list", "b_letters": "🔤 Letters",
+        "b_list": "🔤 Pick from the list", "b_letters": "🔤 Letters", "b_find": "🔎 Find a street",
+        "inline_kyiv": "Kyiv city", "inline_hint": "Start typing a street name in Ukrainian…", "inline_none": "No such street",
+        "inline_none_d": "Try without «вул.» or just part of the name",
         "pick_letter": "Pick the first letter of the street name.\n<i>For example, «просп. Гонгадзе Георгія» is under Г.</i>",
         "letter_page": "Streets starting with «{l}» · page {p} of {n}",
         "no_streets": "No such street found. Try in Ukrainian, without «вул.», or just part of the name.",
@@ -801,7 +805,9 @@ class Bot:
         return text, rows
 
     def list_button(self, u):
-        rows = [[{"text": T[u["lang"]]["b_list"], "callback_data": "L"}]] if STREETS and u["region"] == "kyiv" else []
+        t = T[u["lang"]]
+        rows = ([[{"text": t["b_find"], "switch_inline_query_current_chat": ""}], [{"text": t["b_list"], "callback_data": "L"}]]
+                if STREETS and u["region"] == "kyiv" else [])
         rows.append([{"text": T[u["lang"]]["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
         return rows
 
@@ -895,10 +901,45 @@ class Bot:
             chat_id = cq["message"]["chat"]["id"]
             with self.chat_lock(chat_id):
                 self.callback(cq)
+        elif "inline_query" in upd:
+            self.inline(upd["inline_query"])
         elif "message" in upd and "text" in upd["message"]:
             m = upd["message"]
             with self.chat_lock(m["chat"]["id"]):
                 self.text(m["chat"]["id"], m["text"], m.get("from", {}).get("language_code"))
+
+    # ---------- inline search: '@LightUkraine_bot Свобо' shows matching Kyiv streets while typing
+    def street_matches(self, q, limit=20):
+        ql = q.lower().replace("’", "'").strip()
+        res = [(sid, v) for sid, v in STREET_BY_ID.items() if ql in v.lower().replace("’", "'")]
+        res.sort(key=lambda x: (not street_main(x[1]).lower().startswith(ql), ua_key(street_main(x[1]))))
+        return res[:limit]
+
+    def inline(self, iq):
+        lang = "en" if (iq.get("from", {}).get("language_code") or "").startswith("en") else "uk"
+        row = self.db.one("SELECT lang FROM users WHERE chat_id=?", (iq.get("from", {}).get("id"),))
+        t = T[row["lang"] if row else lang]
+        q = (iq.get("query") or "").strip()
+        districts = {}
+        for name, ids in DISTRICTS:
+            for sid in ids:
+                districts.setdefault(sid, []).append(name)
+        results = []
+        if len(q) >= 2 and STREET_BY_ID:
+            for sid, value in self.street_matches(q):
+                where = ", ".join(districts.get(sid, [])) or t["inline_kyiv"]
+                results.append({"type": "article", "id": f"s{sid}", "title": value, "description": where,
+                                "input_message_content": {"message_text": f"📍 {value}"}})
+            if not results:
+                results.append({"type": "article", "id": "none", "title": t["inline_none"], "description": t["inline_none_d"],
+                                "input_message_content": {"message_text": q}})
+        params = {"inline_query_id": iq["id"], "results": results, "cache_time": 300}
+        if len(q) < 2:
+            params["button"] = {"text": t["inline_hint"], "start_parameter": "find"}
+        try:
+            self.tg.call("answerInlineQuery", timeout=10, **params)
+        except Exception as e:
+            log("answerInlineQuery failed:", repr(e))
 
     def text(self, chat_id, msg, lang_code=None):
         u = self.user(chat_id, lang_code)
@@ -943,6 +984,15 @@ class Bot:
             self.tg.send(chat_id, self.stats_text(u["lang"]))
         elif cmd.startswith("/"):
             self.tg.send(chat_id, t["help"])
+        elif m.startswith("📍") and STREET_BY_ID:
+            name = m.lstrip("📍").strip()
+            sid = next((k for k, v in STREET_BY_ID.items() if v == name), None)
+            if not sid:
+                return self.free_text(chat_id, u, name)
+            if u["region"] != "kyiv":  # inline search covers Kyiv streets
+                self.set_user(chat_id, region="kyiv")
+            self.set_state(chat_id, {"streets": {sid: name}})
+            self.pick_street(chat_id, self.user(chat_id), sid)
         else:
             self.free_text(chat_id, u, m)
 
@@ -1406,7 +1456,7 @@ class Bot:
         while True:
             try:
                 res = self.tg.call("getUpdates", offset=offset, timeout=50,
-                                   allowed_updates=["message", "callback_query"])["result"]
+                                   allowed_updates=["message", "callback_query", "inline_query"])["result"]
             except Exception as e:
                 log("getUpdates failed:", e)
                 time.sleep(5)
@@ -1446,12 +1496,11 @@ class Bot:
                 req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/updater"})
                 with urllib.request.urlopen(req, timeout=60) as r:
                     new[name] = r.read()
-            except urllib.error.HTTPError as e:
-                if e.code == 404 and name != "bot.py":
-                    continue  # optional file not published (yet)
-                log("update check failed:", name, e)
-                return
             except Exception as e:
+                if name != "bot.py":  # data files are optional: missing or unreachable -> keep the local copy
+                    if not (isinstance(e, urllib.error.HTTPError) and e.code == 404):
+                        log("update check: skipped", name, e)
+                    continue
                 log("update check failed:", name, e)
                 return
         local = {}
@@ -1471,8 +1520,11 @@ class Bot:
                 state = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             state = {}
-        if version in state.get("failed", []):
-            return  # this version already failed its self-test; wait for the next one
+        tries = state.get("tries", {})
+        if isinstance(state.get("failed"), list):  # older format: a plain list of failed versions
+            tries.update({v: 1 for v in state["failed"]})
+        if tries.get(version, 0) >= 3:
+            return  # failed its self-test three times (an hour apart) — wait for the next version
         log("update found:", ", ".join(changed), version)
         with tempfile.TemporaryDirectory() as tmp:
             for name in new:
@@ -1487,13 +1539,14 @@ class Bot:
                 tail = (res.stdout + res.stderr)[-600:]
             except Exception as e:
                 passed, tail = False, repr(e)
-            if not passed:
-                state.setdefault("failed", []).append(version)
+            if not passed:  # a real bug, or YASNO was down for a moment: try again next hour, give up after 3
+                tries[version] = tries.get(version, 0) + 1
                 os.makedirs(DATA_DIR, exist_ok=True)
                 with open(state_file, "w", encoding="utf-8") as f:
-                    json.dump(state, f)
-                log("update rejected, self-test failed:\n" + tail)
-                self.admin(f"❌ Оновлення бота {version} не пройшло самоперевірку — працює попередня версія.\n<pre>{html.escape(tail[-400:])}</pre>")
+                    json.dump({"tries": tries}, f)
+                log(f"update rejected ({tries[version]}/3), self-test failed:\n" + tail)
+                if tries[version] >= 3:
+                    self.admin(f"❌ Оновлення бота {version} тричі не пройшло самоперевірку — працює попередня версія.\n<pre>{html.escape(tail[-400:])}</pre>")
                 return
         # Install. The temp folder may be on another disk than the bot folder (inside a container it is),
         # and a rename can't cross disks — so write each file next to its target first, then swap it in
@@ -1677,6 +1730,25 @@ def self_test():
             hid22 = next((k for k, v in bot.state(bot.user(C))["houses"].items() if v == "22"), None)
             step("tap house 22", lambda: cb(f"h:{hid22}"), lambda s: "Черга 20.1" in s)
         step("old-style list button still works", lambda: cb("L:Г:1"), lambda s: "«Г»" in s)
+
+        # inline search: typing '@bot Свобо' lists streets; picking one goes straight to the houses
+        calls = []
+        real_call = bot.tg.call
+        bot.tg.call = lambda method, **k: calls.append((method, k)) or {}
+        step("welcome has 'Find a street' button", lambda: bot.text(4242, "/start", "uk"),
+             lambda s: "Привіт" in s and any(b.get("switch_inline_query_current_chat") == "" for r in tg.out[-1][3] for b in r))
+        bot.inline({"id": "q1", "from": {"id": C, "language_code": "uk"}, "query": "Свобо"})
+        titles = [r["title"] for r in calls[-1][1]["results"]] if calls else []
+        step("inline 'Свобо' -> street list", lambda: tg.out.append(("send", C, " / ".join(titles[:4]), None)),
+             lambda s: "Свободи" in s)
+        bot.inline({"id": "q2", "from": {"id": C}, "query": "С"})
+        step("inline with 1 letter -> hint button only", lambda: tg.out.append(("send", C, str(calls[-1][1].get("button", {}).get("text")), None)),
+             lambda s: "Почніть" in s)
+        picked = calls[-2][1]["results"][0]["input_message_content"]["message_text"] if len(calls) >= 2 else ""
+        bot.tg.call = real_call
+        bot.db.q("DELETE FROM addresses WHERE chat_id=?", (C,))
+        step(f"picked '{picked}' -> houses for that street", lambda: bot.text(C, picked),
+             lambda s: picked.lstrip("📍 ") in s and bot.state(bot.user(C)).get("street", {}).get("name") == picked.lstrip("📍 "))
 
     # people's reports: two people in Kyiv queue 4.1 say "no power" while the schedule says it's on
     seq41 = slots(days[0][1].get("GPV4.1"))
