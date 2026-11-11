@@ -100,6 +100,16 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
 .opts li{padding:8px 10px;border-radius:6px;cursor:pointer}
 .opts li[aria-selected="true"],.opts li:hover{background:color-mix(in srgb,var(--accent) 16%,transparent)}
 .opts li.hint{color:var(--muted);cursor:default;background:none}
+.browse{display:flex;flex-direction:column;gap:8px}
+.letters{display:flex;flex-wrap:wrap;gap:4px}
+.letters button{all:unset;cursor:pointer;min-width:30px;text-align:center;padding:6px 4px;border-radius:8px;background:var(--surface-2);font:600 14px var(--f-mono);color:var(--fg)}
+.letters button:hover{background:var(--off)}
+.letters button[aria-pressed="true"]{background:var(--on);color:var(--on-ink)}
+.letters button:focus-visible,.blist button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.blist{list-style:none;margin:0;padding:4px;max-height:280px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.blist button{all:unset;box-sizing:border-box;display:flex;justify-content:space-between;gap:10px;width:100%;padding:8px 10px;border-radius:6px;cursor:pointer}
+.blist button:hover{background:var(--surface-2)}
+.blist button small{color:var(--muted);font-size:12px;white-space:nowrap}
 .addr-msg{margin:0;font-size:14px;color:var(--muted)}
 .addr-msg b{color:var(--fg)}
 .addr-msg a{color:var(--accent)}
@@ -142,6 +152,11 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
         <input id="house" type="text" autocomplete="off" placeholder="№" disabled role="combobox" aria-expanded="false" aria-controls="houseList">
         <ul class="opts" id="houseList" role="listbox" hidden></ul>
       </div>
+    </div>
+    <div class="browse" id="browse" hidden>
+      <p class="addr-msg" data-i18n="browseTitle">Або виберіть вулицю зі списку:</p>
+      <div class="letters" id="letters" role="group"></div>
+      <ul class="blist" id="blist" hidden></ul>
     </div>
     <p class="addr-msg" id="addrMsg"></p>
   </section>
@@ -203,6 +218,7 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
       locale:"uk-UA", pageTitle:"Світло Київ",
       title:"Світло в Києві", subtitle:"Графік відключень ДТЕК Київські електромережі", queue:"Черга",
       addrTitle:"Знайти чергу за адресою", street:"Вулиця", house:"Будинок", streetPh:"Наприклад, Хрещатик",
+      browseTitle:"Або виберіть вулицю зі списку:",
       addrOff:`Свою чергу можна дізнатися за адресою на ${DTEK}сайті ДТЕК</a>.`,
       clockAria:"Сьогоднішній графік на 24-годинному циферблаті", now:"зараз", loading:"Завантаження…",
       legendOn:"Світло є", legendOff:"Світла немає", legendMaybe:"Можливе відключення", legendNow:"Зараз",
@@ -233,6 +249,7 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
       locale:"en-GB", pageTitle:"Power in Kyiv",
       title:"Power in Kyiv", subtitle:"DTEK Kyiv Electric Networks outage schedule", queue:"Queue",
       addrTitle:"Find your queue by address", street:"Street", house:"House", streetPh:"In Ukrainian, e.g. Хрещатик",
+      browseTitle:"Or pick the street from the list:",
       addrOff:`You can look up your queue by address on the ${DTEK}DTEK website</a>.`,
       clockAria:"Today's schedule on a 24-hour dial", now:"now", loading:"Loading…",
       legendOn:"Power on", legendOff:"Power off", legendMaybe:"Possible outage", legendNow:"Now",
@@ -590,10 +607,63 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
         msg.innerHTML = ""; msg.append(pre, Object.assign(document.createElement("b"),{textContent:label}), post); }
     } catch {}
   }
-  combo($("street"), $("streetList"), q => q.length < 2 ? Promise.resolve([]) : api("streets", {query:q}), it => {
+  // Full street list (streets.json, built by tools/build_streets.py): instant local search + A–Я browsing
+  const LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ";
+  const ORDER = "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя";
+  const TYPES = ["площа","шосе","узвіз","алея","тупик","проїзд","набережна","майдан","урочище"];
+  const mainName = v => { const m = v.match(/^[^\s.]{1,8}\.\s*(\S.*)$/); if (m) return m[1];  // 'вул. X', 'вул.X'
+    const i = v.indexOf(" "); if (i < 0) return v;
+    return TYPES.includes(v.slice(0, i)) ? v.slice(i + 1) : v; };
+  const uaCmp = (a, b) => { a = a.toLowerCase(); b = b.toLowerCase();
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      const x = ORDER.indexOf(a[i]), y = ORDER.indexOf(b[i]);
+      const xa = x < 0 ? 100 + a.charCodeAt(i) : x, ya = y < 0 ? 100 + b.charCodeAt(i) : y;
+      if (xa !== ya) return xa - ya; }
+    return a.length - b.length; };
+  const norm = s => s.toLowerCase().replace(/’/g, "'");
+  let localStreets = null, byLetter = {};
+
+  async function loadStreetList(){
+    try {
+      const r = await fetch("streets.json", {cache:"no-cache"}); if (!r.ok) return;
+      localStreets = (await r.json()).streets.map(s => ({id:s.id, value:s.value, main:mainName(s.value)}));
+      localStreets.sort((a,b) => uaCmp(a.main, b.main));
+      for (const s of localStreets) { const f = s.main[0]?.toUpperCase(); (byLetter[LETTERS.includes(f) ? f : "0–9"] ||= []).push(s); }
+      const box = $("letters"); box.innerHTML = "";
+      for (const l of [...LETTERS].filter(l => byLetter[l]).concat(byLetter["0–9"] ? ["0–9"] : [])) {
+        const b = document.createElement("button"); b.type = "button"; b.textContent = l; b.setAttribute("aria-pressed","false");
+        b.addEventListener("click", () => showLetter(l, b)); box.append(b);
+      }
+      $("browse").hidden = false;
+    } catch {}
+  }
+  function showLetter(l, btn){
+    document.querySelectorAll("#letters button").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    const ul = $("blist"); ul.innerHTML = ""; ul.hidden = false; ul.scrollTop = 0;
+    for (const s of byLetter[l] || []) {
+      const li = document.createElement("li"), b = document.createElement("button"); b.type = "button";
+      const name = document.createElement("span"); name.textContent = s.main;
+      const type = document.createElement("small"); type.textContent = s.value === s.main ? "" : s.value.slice(0, s.value.length - s.main.length).trim();
+      b.append(name, type);
+      b.addEventListener("click", () => { $("street").value = s.value; ul.hidden = true;
+        document.querySelectorAll("#letters button").forEach(x => x.setAttribute("aria-pressed","false")); chooseStreet(s); });
+      li.append(b); ul.append(li);
+    }
+  }
+  function searchStreets(q){
+    if (localStreets) {
+      const n = norm(q);
+      if (n.length < 2) return Promise.resolve([]);
+      return Promise.resolve(localStreets.filter(s => norm(s.value).includes(n))
+        .sort((a,b) => (norm(b.main).startsWith(n) - norm(a.main).startsWith(n)) || uaCmp(a.main, b.main)));
+    }
+    return q.length < 3 ? Promise.resolve([]) : api("streets", {query:q});  // YASNO needs 3+ letters
+  }
+  function chooseStreet(it){
     street = it; const h = $("house"); h.disabled = false; h.value = ""; h.focus();
     msg.textContent = t("pickHouse");
-  });
+  }
+  combo($("street"), $("streetList"), searchStreets, chooseStreet);
   combo($("house"), $("houseList"), q => api("houses", {streetId:street.id, query:q}), async it => {
     msg.textContent = t("searching");
     try {
@@ -612,7 +682,7 @@ button.refresh{font:500 13px var(--f-body);background:none;border:1px solid var(
   let addrOn = false;
   (async () => {
     try { const r = await fetch("api.php?ep=ping", {cache:"no-store"}); if (!r.ok) throw 0; await r.json();
-      addrOn = true; $("addr").hidden = false; showSaved();
+      addrOn = true; $("addr").hidden = false; showSaved(); loadStreetList();
     } catch { $("addrOff").hidden = false; }
   })();
 

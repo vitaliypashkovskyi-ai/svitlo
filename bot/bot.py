@@ -58,6 +58,46 @@ QUIET_FROM, QUIET_TO = 23 * 60, 7 * 60
 RETURN_WINDOW = 10            # "power is back" message within 10 min after the scheduled time
 CACHE_TTL = {"streets": 86400, "houses": 7 * 86400, "group": 7 * 86400}
 SEND_RATE = 25                # messages per second, below Telegram's ~30/s limit
+STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
+LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
+PAGE = 10                     # streets per page in the list
+
+
+def street_main(value):
+    """'просп. Гонгадзе Георгія' -> 'Гонгадзе Георгія' (the part people look up by)."""
+    import re
+    m = re.match(r"^[^\s.]{1,8}\.\s*(\S.*)$", value)  # 'вул. X', 'вул.X'
+    if m:
+        return m.group(1)
+    head, _, rest = value.partition(" ")
+    return rest if rest and head in ("площа", "шосе", "узвіз", "алея", "тупик", "проїзд", "набережна", "майдан", "урочище") else value
+
+
+def ua_key(s):
+    order = {ch: i for i, ch in enumerate("абвгґдеєжзиіїйклмнопрстуфхцчшщьюя")}
+    return [order.get(ch, 100 + ord(ch)) for ch in s.lower()]
+
+
+def load_streets():
+    """Full street list built by tools/build_streets.py: {letter: [(main, id, value)]}."""
+    try:
+        with open(STREETS_FILE, encoding="utf-8") as f:
+            items = json.load(f)["streets"]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        return {}, {}
+    by_letter, by_id = {}, {}
+    for s in items:
+        main = street_main(s["value"])
+        first = main[:1].upper()
+        letter = first if first in LETTERS else "0–9"
+        by_letter.setdefault(letter, []).append((main, str(s["id"]), s["value"]))
+        by_id[str(s["id"])] = s["value"]
+    for v in by_letter.values():
+        v.sort(key=lambda x: (ua_key(x[0]), x[2]))
+    return by_letter, by_id
+
+
+STREETS, STREET_BY_ID = load_streets()
 
 # ===================================================================== texts
 T = {
@@ -65,7 +105,10 @@ T = {
         "welcome": "Привіт! Я показую графік відключень світла ДТЕК у Києві.\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
         "ask_street": "Напишіть назву вулиці українською, наприклад <b>Хрещатик</b>.",
         "help": "Що я вмію:\n/now — графік зараз\n/address — мої адреси (до 5)\n/settings — нагадування й мова\n/queue 4.1 — додати чергу вручну\n\nНапишіть назву вулиці, щоб додати адресу.",
-        "short": "Напишіть хоча б 2 літери назви вулиці.",
+        "short": "Напишіть хоча б 3 літери назви вулиці або виберіть її зі списку.",
+        "b_list": "🔤 Вибрати зі списку", "b_letters": "🔤 Літери",
+        "pick_letter": "Виберіть першу літеру назви вулиці.\n<i>Наприклад, для «просп. Гонгадзе Георгія» — літера Г.</i>",
+        "letter_page": "Вулиці на «{l}» · сторінка {p} з {n}",
         "no_streets": "Не знайшов такої вулиці. Спробуйте без «вул.» або лише частину назви.",
         "pick_street": "Виберіть вулицю:",
         "ask_house": "<b>{street}</b>\nТепер напишіть номер будинку, наприклад <code>22</code>.",
@@ -117,7 +160,10 @@ T = {
         "welcome": "Hi! I show DTEK's power outage schedule for Kyiv.\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
         "ask_street": "Type the street name in Ukrainian, for example <b>Хрещатик</b>.",
         "help": "What I can do:\n/now — schedule now\n/address — my addresses (up to 5)\n/settings — reminders and language\n/queue 4.1 — add a queue manually\n\nType a street name to add an address.",
-        "short": "Type at least 2 letters of the street name.",
+        "short": "Type at least 3 letters of the street name, or pick it from the list.",
+        "b_list": "🔤 Pick from the list", "b_letters": "🔤 Letters",
+        "pick_letter": "Pick the first letter of the street name.\n<i>For example, «просп. Гонгадзе Георгія» is under Г.</i>",
+        "letter_page": "Streets starting with «{l}» · page {p} of {n}",
         "no_streets": "No such street found. Try in Ukrainian, without «вул.», or just part of the name.",
         "pick_street": "Pick your street:",
         "ask_house": "<b>{street}</b>\nNow type the house number, for example <code>22</code>.",
@@ -507,6 +553,29 @@ class Bot:
         text = t["addr_title"].format(n=MAX_ADDRESSES) + ("" if len(rows) > 2 else "\n\n" + t["addr_empty"])
         return text, rows
 
+    def list_button(self, u):
+        return [[{"text": T[u["lang"]]["b_list"], "callback_data": "L"}]] if STREETS else None
+
+    def letters_view(self, u):
+        letters = [l for l in LETTERS if l in STREETS] + (["0–9"] if "0–9" in STREETS else [])
+        rows = [[{"text": l, "callback_data": f"L:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
+        return T[u["lang"]]["pick_letter"], rows
+
+    def letter_page_view(self, u, letter, page):
+        t = T[u["lang"]]
+        items = STREETS.get(letter, [])
+        pages = max(1, (len(items) + PAGE - 1) // PAGE)
+        page = min(max(1, page), pages)
+        rows = [[{"text": value[:60], "callback_data": f"ls:{sid}"}] for _, sid, value in items[(page - 1) * PAGE: page * PAGE]]
+        nav = []
+        if page > 1:
+            nav.append({"text": "◀️", "callback_data": f"L:{letter}:{page - 1}"})
+        nav.append({"text": f"{page}/{pages}", "callback_data": "x"})
+        if page < pages:
+            nav.append({"text": "▶️", "callback_data": f"L:{letter}:{page + 1}"})
+        rows += [nav, [{"text": t["b_letters"], "callback_data": "LL"}]]
+        return t["letter_page"].format(l=letter, p=page, n=pages), rows
+
     def settings_view(self, u):
         t = T[u["lang"]]
         onoff = lambda v: t["on"] if v else t["off"]  # noqa: E731
@@ -547,7 +616,7 @@ class Bot:
             if self.active_address(u):
                 self.tg.send(chat_id, *self.status_view(u))
             else:
-                self.tg.send(chat_id, t["welcome"])
+                self.tg.send(chat_id, t["welcome"], self.list_button(u))
         elif cmd == "/help":
             self.tg.send(chat_id, t["help"])
         elif cmd == "/now":
@@ -582,14 +651,20 @@ class Bot:
 
     def search_streets(self, chat_id, u, q):
         t = T[u["lang"]]
-        if len(q) < 2:
-            return self.tg.send(chat_id, t["short"])
-        try:
-            res = self.yasno("streets", query=q[:60])
-        except Exception:
-            return self.tg.send(chat_id, t["yasno_err"])
+        if STREET_BY_ID and len(q) >= 2:
+            # local list: instant, works with short input, no load on YASNO
+            ql = q.lower().replace("’", "'")
+            res = [{"id": sid, "value": v} for sid, v in STREET_BY_ID.items() if ql in v.lower().replace("’", "'")]
+            res.sort(key=lambda s: (not street_main(s["value"]).lower().startswith(ql), ua_key(street_main(s["value"]))))
+        elif len(q) < 3:
+            return self.tg.send(chat_id, t["short"], self.list_button(u))
+        else:
+            try:
+                res = self.yasno("streets", query=q[:60])
+            except Exception:
+                return self.tg.send(chat_id, t["yasno_err"], self.list_button(u))
         if not res:
-            return self.tg.send(chat_id, t["no_streets"])
+            return self.tg.send(chat_id, t["no_streets"], self.list_button(u))
         st = {"streets": {str(s["id"]): s["value"] for s in res[:30]}}
         self.set_state(chat_id, st)
         if len(res) == 1:
@@ -691,7 +766,22 @@ class Bot:
             return self.tg.edit(chat_id, mid, *self.addr_view(self.user(chat_id)))
         if kind == "aa":
             self.set_state(chat_id, {})
-            return self.tg.send(chat_id, t["ask_street"])
+            return self.tg.send(chat_id, t["ask_street"], self.list_button(u))
+        if kind == "LL":  # back to letters from inside the list: edit in place
+            return self.tg.edit(chat_id, mid, *self.letters_view(u))
+        if kind == "L":
+            if not val:  # from a text message (welcome, "not found"): keep that text, open the list below
+                return self.tg.send(chat_id, *self.letters_view(u))
+            letter, _, page = val.rpartition(":")
+            return self.tg.edit(chat_id, mid, *self.letter_page_view(u, letter, int(page) if page.isdigit() else 1))
+        if kind == "ls":
+            name = STREET_BY_ID.get(val)
+            if not name:
+                return
+            self.set_state(chat_id, {"streets": {val: name}})
+            return self.pick_street(chat_id, self.user(chat_id), val, mid)
+        if kind == "x":
+            return
         if kind == "st":
             return self.tg.edit(chat_id, mid, *self.settings_view(u))
         if kind in ("sn", "sr", "sq", "sw", "sl"):
@@ -905,6 +995,18 @@ def self_test():
     step("language", lambda: cb("sl"), lambda s: "Settings" in s)
     cb("sl")
     step("bad queue", lambda: bot.text(C, "/queue 99"), lambda s: "Не знаю" in s)
+    if STREETS:
+        step("list: letters", lambda: cb("L"), lambda s: "літеру" in s)
+        print("     letters:", "".join(btns()))
+        gong = next(i for i, x in enumerate(STREETS["Г"]) if x[0] == "Гонгадзе Георгія")
+        page = gong // PAGE + 1
+        step(f"list: Г page {page}", lambda: cb(f"L:Г:{page}"), lambda s: "«Г»" in s)
+        print("     buttons:", btns()[:4], "…", btns()[-4:])
+        sid = STREETS["Г"][gong][1]
+        step("list: pick Гонгадзе", lambda: cb(f"ls:{sid}"), lambda s: "Гонгадзе" in s)
+        step("house 1/102", lambda: bot.text(C, "1/102"), lambda s: "Черга" in s)
+        step("local search, 2 letters", lambda: bot.text(C, "Хр"), lambda s: "Виберіть вулицю" in s or "Хрещатик" in s)
+        print("     buttons:", btns()[:5])
 
     data = schedule()
     days = days_from_today(data, time.time())
