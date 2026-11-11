@@ -107,7 +107,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.16"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.17"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -207,6 +207,8 @@ T = {
         "b_region": "📍 Регіон: {r}", "pick_region": "Виберіть регіон. Графіки є для мереж ДТЕК у цих регіонах:",
         "region_set": "Регіон: <b>{r}</b>.",
         "region_no_search": "Пошук за адресою для регіону «{r}» недоступний. Дізнайтеся свою чергу на <a href=\"{url}\">сайті ДТЕК</a> і надішліть її, наприклад <code>/queue 3.2</code>",
+        "queue_pick": "<b>{r}</b>\nЧергу за адресою знає лише ДТЕК, тому:\n\n1️⃣ Дізнайтеся свою чергу на сайті ДТЕК або в їхньому чат-боті — кнопки нижче.\n2️⃣ Натисніть свою чергу тут.\n\nДалі все як завжди: графік, нагадування, повідомлення про аварії.",
+        "b_dtek_queue_site": "🌐 Дізнатися чергу на сайті ДТЕК", "b_dtek_queue_bot": "💬 Чат-бот ДТЕК",
         "ask_city": "Напишіть назву населеного пункту, наприклад <b>Дніпро</b>.\n<i>Пошук працює для адрес ДТЕК Дніпровські електромережі.</i>",
         "pick_city": "Виберіть населений пункт:", "no_cities": "Не знайшов такого населеного пункту. Напишіть хоча б 3 літери назви.",
         "ask_street_in": "<b>{city}</b>\nТепер напишіть назву вулиці.",
@@ -310,6 +312,8 @@ T = {
         "b_region": "📍 Region: {r}", "pick_region": "Pick your region. Schedules are available for DTEK networks in these regions:",
         "region_set": "Region: <b>{r}</b>.",
         "region_no_search": "Address search isn't available for {r}. Look up your queue on the <a href=\"{url}\">DTEK website</a> and send it, for example <code>/queue 3.2</code>",
+        "queue_pick": "<b>{r}</b>\nOnly DTEK knows which queue an address is in, so:\n\n1️⃣ Look up your queue on DTEK's website or chatbot — buttons below.\n2️⃣ Tap your queue here.\n\nThen everything works as usual: schedule, reminders, outage reports.",
+        "b_dtek_queue_site": "🌐 Find my queue on DTEK's site", "b_dtek_queue_bot": "💬 DTEK chatbot",
         "ask_city": "Type the town or village name in Ukrainian, for example <b>Дніпро</b>.\n<i>Search covers addresses served by DTEK Dnipro Electric Networks.</i>",
         "pick_city": "Pick the town or village:", "no_cities": "No such town found. Type at least 3 letters of the name.",
         "ask_street_in": "<b>{city}</b>\nNow type the street name.",
@@ -903,9 +907,21 @@ class Bot:
         R = REGIONS[u["region"]]
         self.set_state(chat_id, {})
         if not R["yasno"]:
-            return self.tg.send(chat_id, t["region_no_search"].format(r=region_name(u["region"], u["lang"]), url=R["dtek"]),
-                                [[{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}]])
+            return self.tg.send(chat_id, *self.queue_pick_view(u))
         self.tg.send(chat_id, t["ask_city"] if R["cities"] else t["ask_street"], self.list_button(u))
+
+    def queue_pick_view(self, u):
+        """Regions without address search: DTEK links to look the queue up, then tap it."""
+        t = T[u["lang"]]
+        R = REGIONS[u["region"]]
+        data = schedule(u["region"])
+        days = days_from_today(data, time.time()) if data else []
+        groups = sorted((k[3:] for k in (days[0][1] if days else {})), key=lambda q: [int(x) for x in q.split(".")])
+        rows = [[{"text": t["b_dtek_queue_site"], "url": R["dtek"]}], [{"text": t["b_dtek_queue_bot"], "url": R["tg"]}]]
+        btns = [{"text": q, "callback_data": f"qq:{q}"} for q in groups]
+        rows += [btns[i:i + 4] for i in range(0, len(btns), 4)]
+        rows.append([{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
+        return t["queue_pick"].format(r=region_name(u["region"], u["lang"])), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
     def dnipro_buttons(self, u):
@@ -1496,6 +1512,11 @@ class Bot:
             return self.pick_street(chat_id, self.user(chat_id), val, mid)
         if kind == "x":
             return
+        if kind == "qq":
+            q = val if all(x.isdigit() for x in val.split(".")) and val.count(".") == 1 else None
+            if q and self.add_address(chat_id, t["queue_label"].format(q=q), q, u["region"]):
+                return self.tg.edit(chat_id, mid, *self.status_view(self.user(chat_id)))
+            return
         if kind == "DT":
             return self.tg.edit(chat_id, mid, *self.towns_view(u)) if DNIPRO else None
         if kind == "DV":
@@ -1909,7 +1930,10 @@ def self_test():
     # regions
     step("region picker", lambda: cb("rg"), lambda s: "Виберіть регіон" in s)
     print("     buttons:", btns())
-    step("Odesa: no address search", lambda: cb("rg:odesa"), lambda s: "недоступний" in s)
+    step("Odesa: DTEK links + queue buttons", lambda: cb("rg:odesa"),
+         lambda s: any("Чергу за адресою знає лише ДТЕК" in o[2] for o in tg.out)
+         and any(b.get("callback_data") == "qq:3.2" for r in tg.out[-1][3] for b in r))
+    step("Odesa: tap queue 3.2", lambda: cb("qq:3.2"), lambda s: "Черга 3.2" in s)
     step("Odesa: /queue 3.2", lambda: bot.text(C, "/queue 3.2"), lambda s: "Черга 3.2" in s)
     print("     ", tg.out[-1][2].split("\n")[1], "| site:", [b.get("url") for r in tg.out[-1][3] for b in r if b.get("url")])
     step("Dnipro: asks for town", lambda: cb("rg:dnipro"), lambda s: "населеного пункту" in s)
