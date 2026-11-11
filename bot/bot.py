@@ -54,7 +54,7 @@ REGIONS = {
              "dtek": "https://www.dtek-kem.com.ua/ua/shutdowns",
              "co": {"uk": "ДТЕК Київські електромережі", "en": "DTEK Kyiv Electric Networks"},
              "phones": ["1588", "0 800 501 588"], "tg": "https://t.me/DTEKKyivskielectromerezhibot",
-             "viber": "https://chats.viber.com/dtekkyivskielectromerezhi", "city": ("1551", "https://1551.gov.ua")},
+             "viber": "https://chats.viber.com/dtekkyivskielectromerezhi", "city": ("1551", "https://t.me/Kontaktny_centre_1551_bot", "1551.gov.ua")},
     "kyiv-region": {"uk": "Київська область", "en": "Kyiv region", "yasno": None, "cities": False,
                     "dtek": "https://www.dtek-krem.com.ua/ua/shutdowns",
                     "co": {"uk": "ДТЕК Київські регіональні електромережі", "en": "DTEK Kyiv Regional Electric Networks"},
@@ -91,7 +91,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.10"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.11"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -198,14 +198,14 @@ T = {
         "b_refresh": "🔄 Оновити", "b_site": "🌐 Сайт", "b_addr": "🏠 Адреси", "b_settings": "⚙️ Налаштування",
         "b_rep_off": "⚡ У мене немає світла", "b_rep_on": "💡 Світло є",
         "b_dtek": "📞 Повідомити ДТЕК", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
-        "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n}",
+        "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
         "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
         "dtek_phones": "📞 Телефони: {p}", "dtek_free": " (безкоштовно)",
         "dtek_bots": "💬 Або через офіційний чат-бот ДТЕК — кнопки нижче.",
         "dtek_text_title": "Готовий текст заявки (натисніть, щоб скопіювати):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
-        "dtek_city": "🏙 Якщо проблема не в електромережі (будинок, двір) — Контактний центр міста: {n}.",
+        "dtek_city": "🏙 Якщо проблема не в електромережі (будинок, двір) — Контактний центр міста: {n}, Telegram-бот (кнопка нижче) або сайт {site}.",
         "dtek_112": "🚨 Якщо через відсутність світла під загрозою життя чи здоров'я — телефонуйте 112.",
         "rep_thanks_off": "Дякую! Врахували: світла немає.", "rep_thanks_on": "Дякую! Врахували: світло є.",
         "rep_wait": "Ви вже повідомили. Можна змінити за кілька хвилин.",
@@ -288,14 +288,14 @@ T = {
         "b_refresh": "🔄 Refresh", "b_site": "🌐 Website", "b_addr": "🏠 Addresses", "b_settings": "⚙️ Settings",
         "b_rep_off": "⚡ No power here", "b_rep_on": "💡 Power is on",
         "b_dtek": "📞 Report to DTEK", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
-        "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n}",
+        "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
         "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
         "dtek_phones": "📞 Phone: {p}", "dtek_free": " (free)",
         "dtek_bots": "💬 Or use DTEK's official chatbot — buttons below.",
         "dtek_text_title": "Ready-made text (tap to copy; DTEK works in Ukrainian):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
-        "dtek_city": "🏙 If the problem isn't the grid (your building or yard) — the city contact centre: {n}.",
+        "dtek_city": "🏙 If the problem isn't the grid (your building or yard) — the city contact centre: {n}, its Telegram bot (button below) or {site}.",
         "dtek_112": "🚨 If lives or health are at risk because of the outage — call 112.",
         "rep_thanks_off": "Thanks! Noted: no power.", "rep_thanks_on": "Thanks! Noted: power is on.",
         "rep_wait": "You've already reported. You can change it in a few minutes.",
@@ -732,7 +732,7 @@ class Bot:
             lines += ["", t["dtek_text_title"], f"<code>{text}</code>"]
         lines.append("")
         if R.get("city"):
-            lines.append(t["dtek_city"].format(n=f"<b>{R['city'][0]}</b>"))
+            lines.append(t["dtek_city"].format(n=f"<b>{R['city'][0]}</b>", site=R["city"][2]))
         lines.append(t["dtek_112"])
         rows = [[{"text": t["b_dtek_tg"], "url": R["tg"]}]]
         if R.get("viber"):
