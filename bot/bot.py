@@ -74,6 +74,7 @@ AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
 UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
 UPDATE_FILES = ("bot.py", "streets.json")
 UPDATE_EVERY = 3600
+BOT_VERSION = "2026-11-11.4"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1030,7 +1031,7 @@ class Bot:
     # ---------- main loop
     def run(self):
         me = self.tg.call("getMe")["result"]
-        log(f"Bot @{me['username']} started")
+        log(f"Bot @{me['username']} started, version {BOT_VERSION}, auto-update {'on' if AUTO_UPDATE else 'off'}")
         for lang in ("uk", "en"):
             try:
                 self.tg.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in T[lang]["commands"]],
