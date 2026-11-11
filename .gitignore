@@ -3,3 +3,5 @@ styles2.html
 __pycache__/
 bot/.env
 bot/data/
+tools/nominatim_cache.json
+mockup_districts.html

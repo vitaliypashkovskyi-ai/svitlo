@@ -72,17 +72,19 @@ SEND_RATE = 25                # messages per second, below Telegram's ~30/s limi
 # version's self-test and only then switches to it. AUTO_UPDATE=0 in .env turns it off.
 AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
 UPDATE_URL = os.environ.get("UPDATE_URL", "https://raw.githubusercontent.com/vitaliypashkovskyi-ai/svitlo/main/bot/")
-UPDATE_FILES = ("bot.py", "streets.json")
+UPDATE_FILES = ("bot.py", "streets.json", "districts.json")  # districts.json is optional
 UPDATE_EVERY = 3600
 # People's reports ("no power" / "power is on"): a report counts for an hour; an alert needs at
 # least CROWD_MIN people of the same queue saying "no power" while the schedule says power is on.
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.6"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.7"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
+HPAGE = 30                    # house buttons per page (6 rows of 5)
+DISTRICTS_FILE = os.environ.get("DISTRICTS_FILE", os.path.join(HERE, "districts.json"))
 
 
 def street_main(value):
@@ -121,6 +123,19 @@ def load_streets():
 
 STREETS, STREET_BY_ID = load_streets()
 
+
+def load_districts():
+    """Kyiv districts built by tools/build_districts.py: [(name, {street ids})]. Empty if no file."""
+    try:
+        with open(DISTRICTS_FILE, encoding="utf-8") as f:
+            d = json.load(f)["districts"]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        return []
+    return [(name, {str(i) for i in ids}) for name, ids in d.items() if ids]
+
+
+DISTRICTS = load_districts()
+
 # ===================================================================== texts
 T = {
     "uk": {
@@ -142,6 +157,14 @@ T = {
         "ask_house": "<b>{street}</b>\nТепер напишіть номер будинку, наприклад <code>22</code>.",
         "no_houses": "Не знайшов будинок «{q}» на цій вулиці. Спробуйте лише номер, без літери чи корпусу.",
         "pick_house": "Виберіть будинок:",
+        "loading_houses": "<b>{street}</b>\n⏳ Завантажую номери будинків…",
+        "houses_page": "<b>{street}</b> · {n}\nВиберіть номер будинку або напишіть його:",
+        "houses_n": lambda n: f"{n} {'будинок' if n % 10 == 1 and n % 100 != 11 else 'будинки' if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else 'будинків'}",
+        "b_other_street": "⬅️ Інша вулиця",
+        "pick_district": "Виберіть район Києва:\n<i>Не знаєте район? Натисніть «Усі вулиці А–Я».</i>",
+        "b_all_streets": "🔤 Усі вулиці А–Я", "b_districts": "⬅️ Райони",
+        "district_letters": "<b>{d} район</b> · {n} вулиць\nВиберіть першу літеру назви вулиці:",
+        "district_page": "<b>{d} район</b> · вулиці на «{l}» · {p}/{n}",
         "no_group": "Для цієї адреси YASNO не вказує чергу. Спробуйте сусідній будинок або вкажіть чергу: <code>/queue 4.1</code>",
         "yasno_err": "Сервіс пошуку адрес зараз не відповідає. Спробуйте пізніше або вкажіть чергу: <code>/queue 4.1</code>",
         "too_many": "Можна зберегти до {n} адрес. Видаліть одну в /address.",
@@ -214,6 +237,14 @@ T = {
         "ask_house": "<b>{street}</b>\nNow type the house number, for example <code>22</code>.",
         "no_houses": "House «{q}» not found on this street. Try just the number, without a letter or block.",
         "pick_house": "Pick your house:",
+        "loading_houses": "<b>{street}</b>\n⏳ Loading house numbers…",
+        "houses_page": "<b>{street}</b> · {n}\nPick the house number or type it:",
+        "houses_n": lambda n: f"{n} {'house' if n == 1 else 'houses'}",
+        "b_other_street": "⬅️ Another street",
+        "pick_district": "Pick a Kyiv district:\n<i>Not sure? Tap «All streets A–Я».</i>",
+        "b_all_streets": "🔤 All streets A–Я", "b_districts": "⬅️ Districts",
+        "district_letters": "<b>{d} district</b> · {n} streets\nPick the first letter of the street name:",
+        "district_page": "<b>{d} district</b> · streets starting with «{l}» · {p}/{n}",
         "no_group": "YASNO lists no queue for this address. Try a neighbouring house or set the queue: <code>/queue 4.1</code>",
         "yasno_err": "The address service isn't responding. Try later or set the queue: <code>/queue 4.1</code>",
         "too_many": "You can save up to {n} addresses. Delete one in /address.",
@@ -699,25 +730,55 @@ class Bot:
                                 [[{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}]])
         self.tg.send(chat_id, t["ask_city"] if R["cities"] else t["ask_street"], self.list_button(u))
 
-    def letters_view(self, u):
-        letters = [l for l in LETTERS if l in STREETS] + (["0–9"] if "0–9" in STREETS else [])
-        rows = [[{"text": l, "callback_data": f"L:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
-        return T[u["lang"]]["pick_letter"], rows
-
-    def letter_page_view(self, u, letter, page):
+    def district_view(self, u):
         t = T[u["lang"]]
-        items = STREETS.get(letter, [])
+        names = [{"text": name, "callback_data": f"LL:{i}"} for i, (name, _) in enumerate(DISTRICTS)]
+        rows = [names[i:i + 2] for i in range(0, len(names), 2)]
+        rows.append([{"text": t["b_all_streets"], "callback_data": "LL:-"}])
+        return t["pick_district"], rows
+
+    def district_streets(self, d):
+        """STREETS limited to one district (d = index into DISTRICTS) or all of them (d = '-')."""
+        if d == "-" or not DISTRICTS or not d.isdigit() or int(d) >= len(DISTRICTS):
+            return STREETS
+        ids = DISTRICTS[int(d)][1]
+        return {l: [x for x in items if x[1] in ids] for l, items in STREETS.items() if any(x[1] in ids for x in items)}
+
+    def letters_view(self, u, d="-"):
+        t = T[u["lang"]]
+        streets = self.district_streets(d)
+        letters = [l for l in LETTERS if l in streets] + (["0–9"] if "0–9" in streets else [])
+        rows = [[{"text": l, "callback_data": f"L:{d}:{l}:1"} for l in letters[i:i + 6]] for i in range(0, len(letters), 6)]
+        if DISTRICTS:
+            rows.append([{"text": t["b_districts"], "callback_data": "LD"}])
+        if d != "-" and DISTRICTS:
+            name = DISTRICTS[int(d)][0]
+            return t["district_letters"].format(d=name, n=sum(len(v) for v in streets.values())), rows
+        return t["pick_letter"], rows
+
+    def letter_page_view(self, u, letter, page, d="-"):
+        t = T[u["lang"]]
+        items = self.district_streets(d).get(letter, [])
         pages = max(1, (len(items) + PAGE - 1) // PAGE)
         page = min(max(1, page), pages)
         rows = [[{"text": value[:60], "callback_data": f"ls:{sid}"}] for _, sid, value in items[(page - 1) * PAGE: page * PAGE]]
         nav = []
         if page > 1:
-            nav.append({"text": "◀️", "callback_data": f"L:{letter}:{page - 1}"})
+            nav.append({"text": "◀️", "callback_data": f"L:{d}:{letter}:{page - 1}"})
         nav.append({"text": f"{page}/{pages}", "callback_data": "x"})
         if page < pages:
-            nav.append({"text": "▶️", "callback_data": f"L:{letter}:{page + 1}"})
-        rows += [nav, [{"text": t["b_letters"], "callback_data": "LL"}]]
+            nav.append({"text": "▶️", "callback_data": f"L:{d}:{letter}:{page + 1}"})
+        back = [{"text": t["b_letters"], "callback_data": f"LL:{d}"}]
+        if DISTRICTS:
+            back.append({"text": t["b_districts"], "callback_data": "LD"})
+        rows += [nav, back]
+        if d != "-" and DISTRICTS:
+            return t["district_page"].format(d=DISTRICTS[int(d)][0], l=letter, p=page, n=pages), rows
         return t["letter_page"].format(l=letter, p=page, n=pages), rows
+
+    def list_start(self, u):
+        """First screen of 'pick from the list': districts if we have them, else letters."""
+        return self.district_view(u) if DISTRICTS else self.letters_view(u)
 
     def settings_view(self, u):
         t = T[u["lang"]]
@@ -880,17 +941,99 @@ class Bot:
         self.tg.send(chat_id, t["pick_street"], [[{"text": s["value"][:60], "callback_data": f"s:{s['id']}"}] for s in res[:30]])
 
     def pick_street(self, chat_id, u, sid, message_id=None):
+        t = T[u["lang"]]
         st = self.state(u)
         name = st.get("streets", {}).get(sid)
         if not name:
             return
         st["street"] = {"id": sid, "name": name}
         self.set_state(chat_id, st)
-        text = T[u["lang"]]["ask_house"].format(street=html.escape(name))
+        wait = t["loading_houses"].format(street=html.escape(name))
         if message_id:
-            self.tg.edit(chat_id, message_id, text)
+            self.tg.edit(chat_id, message_id, wait)
         else:
-            self.tg.send(chat_id, text)
+            res = self.tg.send(chat_id, wait)
+            message_id = (res or {}).get("result", {}).get("message_id") if isinstance(res, dict) else None
+        try:
+            houses = self.all_houses(u["region"], sid, st.get("city", {}).get("id"))
+        except Exception as e:
+            log("house list failed:", repr(e))
+            houses = []
+        if not houses:  # fall back to typing the number
+            text = t["ask_house"].format(street=html.escape(name))
+            return self.tg.edit(chat_id, message_id, text) if message_id else self.tg.send(chat_id, text)
+        st["houses"] = {str(h["id"]): h["value"] for h in houses}
+        st["house_order"] = [str(h["id"]) for h in houses]
+        self.set_state(chat_id, st)
+        view = self.houses_view(self.user(chat_id), 1)
+        return self.tg.edit(chat_id, message_id, *view) if message_id else self.tg.send(chat_id, *view)
+
+    def houses_view(self, u, page):
+        t = T[u["lang"]]
+        st = self.state(u)
+        order = st.get("house_order", [])
+        pages = max(1, (len(order) + HPAGE - 1) // HPAGE)
+        page = min(max(1, page), pages)
+        chunk = order[(page - 1) * HPAGE: page * HPAGE]
+        rows = [[{"text": st["houses"][h][:14], "callback_data": f"h:{h}"} for h in chunk[i:i + 5]] for i in range(0, len(chunk), 5)]
+        if pages > 1:
+            nav = []
+            if page > 1:
+                nav.append({"text": "◀️", "callback_data": f"hp:{page - 1}"})
+            nav.append({"text": f"{page}/{pages}", "callback_data": "x"})
+            if page < pages:
+                nav.append({"text": "▶️", "callback_data": f"hp:{page + 1}"})
+            rows.append(nav)
+        rows.append([{"text": t["b_other_street"], "callback_data": "aa"}])
+        name = html.escape(st.get("street", {}).get("name", ""))
+        return t["houses_page"].format(street=name, n=t["houses_n"](len(order))), rows
+
+    def all_houses(self, region, street_id, city_id=None):
+        """Every house of a street. YASNO returns at most 20 matches per query, so queries
+        are narrowed ('1' -> '10', '11', …) until each returns fewer. Cached for a week."""
+        key = f"allhouses:{region}:{city_id or ''}:{street_id}"
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < CACHE_TTL["houses"]:
+            return json.loads(row["value"])
+        rid, dso = REGIONS[region]["yasno"]
+        base = {"regionId": rid, "dsoId": dso, "streetId": street_id, **({"cityId": city_id} if city_id else {})}
+        found, calls = {}, [0]
+
+        def q(prefix):
+            calls[0] += 1
+            if calls[0] > 400:
+                return []
+            return http_json(f"{YASNO}/houses?" + urllib.parse.urlencode({**base, "query": prefix}), timeout=15)
+
+        def crawl(prefix, depth=0):
+            res = q(prefix)
+            for h in res:
+                found[str(h["id"])] = h["value"]
+            if len(res) >= 20 and depth < 4:
+                for ch in "0123456789/-абвгдежзиклмнопрс":
+                    crawl(prefix + ch, depth + 1)
+
+        try:
+            for d in "123456789":
+                crawl(d)
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+
+        def natural(h):  # 2, 2А, 10, 10/1, 100 …
+            v = h["value"]
+            n = ""
+            for ch in v:  # leading digits only: '1/2' -> 1, '10Б' -> 10
+                if not ch.isdigit():
+                    break
+                n += ch
+            return (int(n) if n else 10 ** 9, v)
+        houses = sorted(({"id": k, "value": v} for k, v in found.items()), key=natural)
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)",
+                  (key, json.dumps(houses, ensure_ascii=False), int(time.time())))
+        log(f"house list: street {street_id}: {len(houses)} houses, {calls[0]} requests")
+        return houses
 
     def search_houses(self, chat_id, u, q):
         t = T[u["lang"]]
@@ -908,10 +1051,14 @@ class Bot:
 
         def natural(h):  # 2, 2А, 10, 10/1, 100 …
             v = h["value"]
-            n = "".join(ch for ch in v[:6] if ch.isdigit()) if v[:1].isdigit() else ""
+            n = ""
+            for ch in v:  # leading digits only: '1/2' -> 1, '10Б' -> 10
+                if not ch.isdigit():
+                    break
+                n += ch
             return (int(n) if n else 10 ** 9, v)
         res = sorted(res, key=natural)
-        st["houses"] = {str(h["id"]): h["value"] for h in res[:32]}
+        st["houses"] = {**st.get("houses", {}), **{str(h["id"]): h["value"] for h in res[:32]}}
         self.set_state(chat_id, st)
         exact = [h for h in res if h["value"].lower() == q.lower()]
         if len(res) == 1 or len(exact) == 1:
@@ -976,6 +1123,8 @@ class Bot:
             return
         if kind == "h":
             return self.pick_house(chat_id, u, val, mid)
+        if kind == "hp":
+            return self.tg.edit(chat_id, mid, *self.houses_view(u, int(val) if val.isdigit() else 1))
         if kind == "r":
             return self.tg.edit(chat_id, mid, *self.status_view(u))
         if kind == "a":
@@ -990,13 +1139,18 @@ class Bot:
             return self.tg.edit(chat_id, mid, *self.addr_view(self.user(chat_id)))
         if kind == "aa":
             return self.ask_address(chat_id, u)
-        if kind == "LL":  # back to letters from inside the list: edit in place
-            return self.tg.edit(chat_id, mid, *self.letters_view(u))
+        if kind == "LD":  # back to districts
+            return self.tg.edit(chat_id, mid, *self.district_view(u))
+        if kind == "LL":  # letters (of a district, or all): edit in place
+            return self.tg.edit(chat_id, mid, *self.letters_view(u, val or "-"))
         if kind == "L":
             if not val:  # from a text message (welcome, "not found"): keep that text, open the list below
-                return self.tg.send(chat_id, *self.letters_view(u))
-            letter, _, page = val.rpartition(":")
-            return self.tg.edit(chat_id, mid, *self.letter_page_view(u, letter, int(page) if page.isdigit() else 1))
+                return self.tg.send(chat_id, *self.list_start(u))
+            parts = val.split(":")
+            if len(parts) == 2:  # buttons from before districts: L:<letter>:<page>
+                parts = ["-"] + parts
+            d, letter, page = parts[0], parts[1], parts[2]
+            return self.tg.edit(chat_id, mid, *self.letter_page_view(u, letter, int(page) if page.isdigit() else 1, d))
         if kind == "ls":
             name = STREET_BY_ID.get(val)
             if not name:
@@ -1199,6 +1353,11 @@ class Bot:
                 req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/updater"})
                 with urllib.request.urlopen(req, timeout=60) as r:
                     new[name] = r.read()
+            except urllib.error.HTTPError as e:
+                if e.code == 404 and name != "bot.py":
+                    continue  # optional file not published (yet)
+                log("update check failed:", name, e)
+                return
             except Exception as e:
                 log("update check failed:", name, e)
                 return
@@ -1209,10 +1368,10 @@ class Bot:
                     local[name] = f.read()
             except FileNotFoundError:
                 local[name] = b""
-        changed = [n for n in UPDATE_FILES if sha(new[n]) != sha(local[n])]
+        changed = [n for n in new if sha(new[n]) != sha(local[n])]
         if not changed:
             return
-        version = sha(b"".join(new[n] for n in UPDATE_FILES))[:10]
+        version = sha(b"".join(new[n] for n in UPDATE_FILES if n in new))[:10]
         state_file = os.path.join(DATA_DIR, "update_state.json")
         try:
             with open(state_file, encoding="utf-8") as f:
@@ -1223,11 +1382,11 @@ class Bot:
             return  # this version already failed its self-test; wait for the next one
         log("update found:", ", ".join(changed), version)
         with tempfile.TemporaryDirectory() as tmp:
-            for name in UPDATE_FILES:
+            for name in new:
                 with open(os.path.join(tmp, name), "wb") as f:
                     f.write(new[name])
             env = {**os.environ, "BOT_TOKEN": "", "ADMIN_CHAT_ID": "", "DATA_DIR": os.path.join(tmp, "data"),
-                   "STREETS_FILE": os.path.join(tmp, "streets.json")}
+                   "STREETS_FILE": os.path.join(tmp, "streets.json"), "DISTRICTS_FILE": os.path.join(tmp, "districts.json")}
             try:
                 res = subprocess.run([sys.executable, "-X", "utf8", os.path.join(tmp, "bot.py"), "--test"], cwd=tmp, env=env,
                                      capture_output=True, text=True, timeout=900)
@@ -1261,8 +1420,9 @@ class Bot:
         if "bot.py" in changed:
             log("restarting on the new version")
             os._exit(0)  # docker 'restart: unless-stopped' starts the new code
-        global STREETS, STREET_BY_ID
+        global STREETS, STREET_BY_ID, DISTRICTS
         STREETS, STREET_BY_ID = load_streets()
+        DISTRICTS = load_districts()
 
     @staticmethod
     def safe(fn, *a):
@@ -1400,6 +1560,30 @@ def self_test():
         step("Dnipro: pick house", lambda: cb(f"h:{hid_d}"), lambda s: "Черга" in s)
     print("     addresses:", [(a["label"], a["queue"], a["region"]) for a in bot.addresses(C)])
     step("reminders across regions run", lambda: bot.notify_tick(), lambda s: True)
+
+    # whole address by taps: (district) -> letter -> street -> house buttons
+    bot.set_user(C, region="kyiv", state=None)
+    bot.db.q("DELETE FROM addresses WHERE chat_id=?", (C,))  # the test user hit the 5-address limit above
+    if STREETS:
+        step("list start", lambda: cb("L"), lambda s: ("район" in s) if DISTRICTS else ("літеру" in s))
+        d = "-"
+        if DISTRICTS:
+            print("     districts:", btns())
+            d = str(next(i for i, (name, _) in enumerate(DISTRICTS) if name.startswith("Шевченків")))
+            step("district letters", lambda: cb(f"LL:{d}"), lambda s: "район" in s and "вулиць" in s)
+            print("     letters:", "".join(b for b in btns() if len(b) <= 3))
+        xs = bot.district_streets(d).get("Х", [])
+        xpage = next((i // PAGE + 1 for i, x in enumerate(xs) if x[2] == "вул. Хрещатик"), 1)
+        step(f"streets on Х, page {xpage}", lambda: cb(f"L:{d}:Х:{xpage}"), lambda s: "«Х»" in s)
+        xid = next((b["callback_data"][3:] for r in tg.out[-1][3] for b in r if b.get("text") == "вул. Хрещатик"), None)
+        print("     streets:", btns()[:6])
+        if xid:
+            step("tap Хрещатик -> house buttons", lambda: cb(f"ls:{xid}"), lambda s: "Хрещатик" in s and "будин" in s)
+            print("     houses:", btns()[:12], "…", btns()[-4:])
+            step("houses page 2", lambda: cb("hp:2"), lambda s: "Хрещатик" in s)
+            hid22 = next((k for k, v in bot.state(bot.user(C))["houses"].items() if v == "22"), None)
+            step("tap house 22", lambda: cb(f"h:{hid22}"), lambda s: "Черга 20.1" in s)
+        step("old-style list button still works", lambda: cb("L:Г:1"), lambda s: "«Г»" in s)
 
     # people's reports: two people in Kyiv queue 4.1 say "no power" while the schedule says it's on
     seq41 = slots(days[0][1].get("GPV4.1"))
