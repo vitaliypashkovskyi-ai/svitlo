@@ -86,7 +86,23 @@ REGIONS = {
               "co": {"uk": "ДТЕК Одеські електромережі", "en": "DTEK Odesa Electric Networks"},
               "phones": ["0 800 409 090", "(048) 705 90 90"], "tg": "https://t.me/DTEKOdeskiElektromerezhiBot",
               "viber": "https://chats.viber.com/dtekodeskielektromerezhi", "city": None},
+    # read straight from each oblenergo's official API ("source"); no address search there
+    "lviv": {"uk": "Львівська область", "en": "Lviv region", "yasno": None, "cities": False, "source": "loe",
+             "dtek": "https://poweron.loe.lviv.ua", "co": {"uk": "Львівобленерго", "en": "Lvivoblenergo"},
+             "phones": [], "tg": None, "viber": None, "city": None},
+    "mykolaiv": {"uk": "Миколаївська область", "en": "Mykolaiv region", "yasno": None, "cities": False, "source": "mk",
+                 "dtek": "https://off.energy.mk.ua", "co": {"uk": "Миколаївобленерго", "en": "Mykolaivoblenergo"},
+                 "phones": [], "tg": None, "viber": None, "city": None},
+    "ivano-frankivsk": {"uk": "Івано-Франківська область", "en": "Ivano-Frankivsk region", "yasno": None, "cities": False,
+                        "source": "if", "dtek": "https://svitlo.oe.if.ua",
+                        "co": {"uk": "Прикарпаттяобленерго", "en": "Prykarpattiaoblenergo"},
+                        "phones": [], "tg": None, "viber": None, "city": None},
+    "cherkasy": {"uk": "Черкаська область", "en": "Cherkasy region", "yasno": None, "cities": False, "source": "ck",
+                 "dtek": "https://www.cherkasyoblenergo.com", "co": {"uk": "Черкасиобленерго", "en": "Cherkasyoblenergo"},
+                 "phones": [], "tg": None, "viber": None, "city": None},
 }
+STANDARD_GROUPS = [f"{q}.{s_}" for q in range(1, 7) for s_ in (1, 2)]
+OE_TTL = 600  # official oblenergo APIs: every 10 minutes is plenty and stays polite
 
 SCHEDULE_TTL = 300            # refresh the schedule every 5 min
 STALE_AFTER = 3600            # alert the admin if data is older than 1 h
@@ -107,7 +123,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.17"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.18"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -201,14 +217,14 @@ DNIPRO = load_dnipro()
 # ===================================================================== texts
 T = {
     "uk": {
-        "welcome": "Привіт! Я показую графік відключень світла ДТЕК у Києві.\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
+        "welcome": "Привіт! Я показую графік відключень світла у Києві та областях — Київській, Дніпропетровській, Одеській, Львівській, Миколаївській, Івано-Франківській і Черкаській (/region).\n\nНапишіть назву вашої вулиці українською, наприклад <b>Хрещатик</b>, і я знайду вашу чергу.\n\nАбо одразу вкажіть чергу: <code>/queue 4.1</code>",
         "ask_street": "Напишіть назву вулиці українською, наприклад <b>Хрещатик</b>.",
         "help": "Що я вмію:\n/now — графік зараз\n/address — мої адреси (до 5)\n/region — вибрати регіон\n/settings — нагадування й мова\n/queue 4.1 — додати чергу вручну\n\nНапишіть назву вулиці, щоб додати адресу.",
-        "b_region": "📍 Регіон: {r}", "pick_region": "Виберіть регіон. Графіки є для мереж ДТЕК у цих регіонах:",
+        "b_region": "📍 Регіон: {r}", "pick_region": "Виберіть регіон. Графіки — з офіційних джерел ДТЕК та обленерго:",
         "region_set": "Регіон: <b>{r}</b>.",
         "region_no_search": "Пошук за адресою для регіону «{r}» недоступний. Дізнайтеся свою чергу на <a href=\"{url}\">сайті ДТЕК</a> і надішліть її, наприклад <code>/queue 3.2</code>",
-        "queue_pick": "<b>{r}</b>\nЧергу за адресою знає лише ДТЕК, тому:\n\n1️⃣ Дізнайтеся свою чергу на сайті ДТЕК або в їхньому чат-боті — кнопки нижче.\n2️⃣ Натисніть свою чергу тут.\n\nДалі все як завжди: графік, нагадування, повідомлення про аварії.",
-        "b_dtek_queue_site": "🌐 Дізнатися чергу на сайті ДТЕК", "b_dtek_queue_bot": "💬 Чат-бот ДТЕК",
+        "queue_pick": "<b>{r}</b>\nЧергу за адресою знає лише {co}, тому:\n\n1️⃣ Дізнайтеся свою чергу на сайті {co}{bot} — кнопки нижче.\n2️⃣ Натисніть свою чергу тут.\n\nДалі все як завжди: графік, нагадування, повідомлення про аварії.",
+        "b_dtek_queue_site": "🌐 Дізнатися чергу на сайті", "b_dtek_queue_bot": "💬 Чат-бот {co}", "or_bot": " або в їхньому чат-боті",
         "ask_city": "Напишіть назву населеного пункту, наприклад <b>Дніпро</b>.\n<i>Пошук працює для адрес ДТЕК Дніпровські електромережі.</i>",
         "pick_city": "Виберіть населений пункт:", "no_cities": "Не знайшов такого населеного пункту. Напишіть хоча б 3 літери назви.",
         "ask_street_in": "<b>{city}</b>\nТепер напишіть назву вулиці.",
@@ -247,8 +263,8 @@ T = {
         "no_data": "Не вдалося завантажити графік. Спробуйте за кілька хвилин.",
         "title": "Черга {q}",
         "on_now": "🟢 Зараз світло є", "off_now": "⚫ Зараз світла немає", "maybe_now": "🟡 Зараз можливе відключення",
-        "next_off": "відключення о <b>{t}</b> (через {left})", "next_on": "увімкнуть о <b>{t}</b> (через {left})",
-        "next_maybe": "можливе відключення о <b>{t}</b> (через {left})", "tomorrow_word": "завтра ",
+        "next_off": "відключення {d}о <b>{t}</b> (через {left})", "next_on": "увімкнуть {d}о <b>{t}</b> (через {left})",
+        "next_maybe": "можливе відключення {d}о <b>{t}</b> (через {left})", "tomorrow_word": "завтра ",
         "no_change": "змін до кінця графіка немає",
         "today": "Сьогодні", "tomorrow": "Завтра", "no_outages": "відключень немає", "off_total": "без світла {d}",
         "not_published": "графік ще не опубліковано", "maybe": "можливо",
@@ -261,11 +277,11 @@ T = {
         "b_share": "📤 Поділитися",
         "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
-        "b_dtek": "📞 Повідомити ДТЕК", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
+        "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
         "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
         "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
         "dtek_phones": "📞 Телефони: {p}", "dtek_free": " (безкоштовно)",
-        "dtek_bots": "💬 Або через офіційний чат-бот ДТЕК — кнопки нижче.",
+        "dtek_bots": "💬 Або через офіційний чат-бот ДТЕК — кнопки нижче.", "oe_site": "🌐 Подати звернення можна на офіційному сайті — кнопка нижче.",
         "dtek_text_title": "Готовий текст заявки (натисніть, щоб скопіювати):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
@@ -306,14 +322,14 @@ T = {
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
-        "welcome": "Hi! I show DTEK's power outage schedule for Kyiv.\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
+        "welcome": "Hi! I show power outage schedules for Kyiv and the Kyiv, Dnipropetrovsk, Odesa, Lviv, Mykolaiv, Ivano-Frankivsk and Cherkasy regions (/region).\n\nType your street name in Ukrainian, for example <b>Хрещатик</b>, and I'll find your queue.\n\nOr set the queue directly: <code>/queue 4.1</code>",
         "ask_street": "Type the street name in Ukrainian, for example <b>Хрещатик</b>.",
         "help": "What I can do:\n/now — schedule now\n/address — my addresses (up to 5)\n/region — choose the region\n/settings — reminders and language\n/queue 4.1 — add a queue manually\n\nType a street name to add an address.",
-        "b_region": "📍 Region: {r}", "pick_region": "Pick your region. Schedules are available for DTEK networks in these regions:",
+        "b_region": "📍 Region: {r}", "pick_region": "Pick your region. Schedules come from DTEK and the oblenergos' official sources:",
         "region_set": "Region: <b>{r}</b>.",
         "region_no_search": "Address search isn't available for {r}. Look up your queue on the <a href=\"{url}\">DTEK website</a> and send it, for example <code>/queue 3.2</code>",
-        "queue_pick": "<b>{r}</b>\nOnly DTEK knows which queue an address is in, so:\n\n1️⃣ Look up your queue on DTEK's website or chatbot — buttons below.\n2️⃣ Tap your queue here.\n\nThen everything works as usual: schedule, reminders, outage reports.",
-        "b_dtek_queue_site": "🌐 Find my queue on DTEK's site", "b_dtek_queue_bot": "💬 DTEK chatbot",
+        "queue_pick": "<b>{r}</b>\nOnly {co} knows which queue an address is in, so:\n\n1️⃣ Look up your queue on the {co} website{bot} — buttons below.\n2️⃣ Tap your queue here.\n\nThen everything works as usual: schedule, reminders, outage reports.",
+        "b_dtek_queue_site": "🌐 Find my queue on their site", "b_dtek_queue_bot": "💬 {co} chatbot", "or_bot": " or chatbot",
         "ask_city": "Type the town or village name in Ukrainian, for example <b>Дніпро</b>.\n<i>Search covers addresses served by DTEK Dnipro Electric Networks.</i>",
         "pick_city": "Pick the town or village:", "no_cities": "No such town found. Type at least 3 letters of the name.",
         "ask_street_in": "<b>{city}</b>\nNow type the street name.",
@@ -352,8 +368,8 @@ T = {
         "no_data": "Couldn't load the schedule. Try again in a few minutes.",
         "title": "Queue {q}",
         "on_now": "🟢 Power is on now", "off_now": "⚫ Power is off now", "maybe_now": "🟡 Possible outage now",
-        "next_off": "outage at <b>{t}</b> (in {left})", "next_on": "back on at <b>{t}</b> (in {left})",
-        "next_maybe": "possible outage at <b>{t}</b> (in {left})", "tomorrow_word": "tomorrow ",
+        "next_off": "outage {d}at <b>{t}</b> (in {left})", "next_on": "back on {d}at <b>{t}</b> (in {left})",
+        "next_maybe": "possible outage {d}at <b>{t}</b> (in {left})", "tomorrow_word": "tomorrow ",
         "no_change": "no changes until the end of the schedule",
         "today": "Today", "tomorrow": "Tomorrow", "no_outages": "no outages", "off_total": "{d} without power",
         "not_published": "not published yet", "maybe": "possible",
@@ -365,11 +381,11 @@ T = {
         "b_share": "📤 Share",
         "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
-        "b_dtek": "📞 Report to DTEK", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
+        "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
         "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
         "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
         "dtek_phones": "📞 Phone: {p}", "dtek_free": " (free)",
-        "dtek_bots": "💬 Or use DTEK's official chatbot — buttons below.",
+        "dtek_bots": "💬 Or use DTEK's official chatbot — buttons below.", "oe_site": "🌐 You can file a report on the official website — button below.",
         "dtek_text_title": "Ready-made text (tap to copy; DTEK works in Ukrainian):",
         "dtek_text": "Немає світла за адресою: {addr} (черга {q}){since}.{sched}",
         "dtek_since": ", з {t}", "dtek_sched": " За графіком світло має бути.",
@@ -498,16 +514,193 @@ _sched_lock = threading.Lock()
 
 def schedule(region="kyiv", force=False):
     sc = _scheds[region]
+    src = REGIONS[region].get("source")
+    ttl = OE_TTL if src else SCHEDULE_TTL
     with _sched_lock:
-        if force or time.time() - sc["at"] > SCHEDULE_TTL or not sc["data"]:
+        if force or time.time() - sc["at"] > ttl or not sc["data"]:
             sc["at"] = time.time()
             try:
-                sc["data"] = http_json(DATA_BASE + f"{region}.json?t={int(time.time())}", timeout=30)
+                sc["data"] = OE_READERS[src]() if src else http_json(DATA_BASE + f"{region}.json?t={int(time.time())}", timeout=30)
                 sc["ok_at"] = time.time()
             except Exception as e:
                 log("schedule fetch failed:", region, e)
                 sc["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
         return sc["data"]
+
+
+# ===================================================================== official oblenergo APIs
+# Each reader returns the same shape as outage-data-ua ({"fact": {"data": {day_ts: {"GPV1.1": {hour: state}}}}}),
+# so the rest of the bot works unchanged. Interval parsing follows fastiuk/ukraine-energy-monitor (MIT).
+import calendar
+import re as _re
+
+UA_MONTHS = {"січня": 1, "лютого": 2, "березня": 3, "квітня": 4, "травня": 5, "червня": 6, "липня": 7,
+             "серпня": 8, "вересня": 9, "жовтня": 10, "листопада": 11, "грудня": 12}
+HOUR_STATE = {"++": "yes", "--": "no", "-+": "first", "+-": "second", "??": "maybe", "?+": "mfirst", "+?": "msecond",
+              "-?": "no", "?-": "no"}
+
+
+def kyiv_midnight(y, m, d):
+    """Unix time of 00:00 Kyiv time (EET/EEST; DST from the last Sunday of March to the last Sunday of October)."""
+    def last_sunday(month):
+        last = calendar.monthrange(y, month)[1]
+        return last - (calendar.weekday(y, month, last) + 1) % 7
+    summer = (m, d) >= (3, last_sunday(3)) and (m, d) < (10, last_sunday(10))
+    return calendar.timegm((y, m, d, 0, 0, 0)) - (3 if summer else 2) * 3600
+
+
+def oe_get(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)",
+                                               "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def oe_payload(days):
+    """{date_tuple: {group: [(from_min, to_min, possible)]}} -> outage-data-ua shape."""
+    fact = {}
+    for (y, m, d), groups in days.items():
+        hours_by_group = {}
+        for g, ivs in groups.items():
+            sl = ["+"] * 48
+            for a, b, possible in ivs:
+                for i in range(max(0, a // 30), min(48, (b + 29) // 30)):
+                    if sl[i] != "-":
+                        sl[i] = "?" if possible else "-"
+            hours_by_group["GPV" + g] = {str(h): HOUR_STATE["".join(sl[2 * h - 2: 2 * h])] for h in range(1, 25)}
+        fact[str(kyiv_midnight(y, m, d))] = hours_by_group
+    return {"lastUpdated": datetime.utcnow().isoformat() + "Z", "fact": {"data": fact, "update": time.strftime("%d.%m.%Y %H:%M")}}
+
+
+def _hm(h, m):
+    return min(1440, int(h) * 60 + int(m))
+
+
+def read_intervals(text):
+    """'з 10:00 до 12:00, з 21:00 до 02:00' or '10:00 - 12:00' -> [(600, 720, False), (1260, 1440, False)]."""
+    out = []
+    for h1, m1, h2, m2 in _re.findall(r"(\d{1,2})\s*:\s*(\d{2})\s*(?:-|–|—|до)\s*(\d{1,2})\s*:\s*(\d{2})", text):
+        a, b = _hm(h1, m1), _hm(h2, m2)
+        if b <= a:  # crosses midnight: keep this day's part
+            b = 1440
+        out.append((a, b, False))
+    return out
+
+
+def read_loe():
+    """Lvivoblenergo: text schedule in the photo-grafic menu ('Група 4.2. Електроенергії немає з 10:00 до 12:00')."""
+    menus = oe_get("https://api.loe.lviv.ua/api/menus?page=1&type=photo-grafic", timeout=40).get("hydra:member") or []
+    menu = next((m for m in menus if isinstance(m, dict) and m.get("type") == "photo-grafic"), {})
+    days = {}
+    for item in menu.get("menuItems") or []:
+        raw = item.get("rawHtml") or "" if isinstance(item, dict) else ""
+        if not raw.strip() or len(raw) > 100_000:
+            continue
+        text = html.unescape(_re.sub(r"<[^>]+>", "\n", raw))
+        dm = _re.search(r"графік\b[^\n]{0,200}?\bна\s+(\d{1,2})\.(\d{1,2})\.(\d{4})", text, _re.I)
+        if not dm:
+            continue
+        day = (int(dm[3]), int(dm[2]), int(dm[1]))
+        groups = {}
+        for line in text.split("\n"):
+            gm = _re.search(r"Груп[аи]\s+(\d)\s*\.\s*(\d)\.?", line, _re.I)
+            if gm:
+                groups[f"{gm[1]}.{gm[2]}"] = read_intervals(line[gm.end():])
+        if groups:
+            days[day] = groups
+    return oe_payload(days)
+
+
+_mk_meta = {}
+
+
+def read_mk():
+    """Mykolaivoblenergo: 30-minute cells of the active schedules."""
+    base = "https://off.energy.mk.ua/api"
+    if not _mk_meta or time.time() - _mk_meta.get("at", 0) > 86400:
+        queues = {q["id"]: q["name"] for q in oe_get(f"{base}/outage-queue/by-type/3")
+                  if isinstance(q, dict) and _re.fullmatch(r"\d\.\d", str(q.get("name")))}
+        series = {}
+        for x in oe_get(f"{base}/schedule/time-series"):
+            a = _re.fullmatch(r"(\d{2}):(\d{2})(?::\d{2})?", str(x.get("start")))
+            b = _re.fullmatch(r"(\d{2}):(\d{2})(?::\d{2})?", str(x.get("end")))
+            if a and b:
+                end = _hm(b[1], b[2]) or 1440
+                series[x.get("id")] = (_hm(a[1], a[2]), end)
+        _mk_meta.update(queues=queues, series=series, at=time.time())
+    days = {}
+    for item in oe_get(f"{base}/v2/schedule/active"):
+        start = datetime.fromisoformat(str(item.get("from")).replace("Z", "+00:00")).timestamp()
+        local = time.gmtime(start + 3 * 3600 + 1)  # Kyiv date of a schedule that starts at local midnight
+        day = (local.tm_year, local.tm_mon, local.tm_mday)
+        groups = {g: [] for g in _mk_meta["queues"].values()}
+        for cell in item.get("series") or []:
+            typ = cell.get("type")
+            g, sl = _mk_meta["queues"].get(cell.get("outage_queue_id")), _mk_meta["series"].get(cell.get("time_series_id"))
+            if g and sl and typ in ("OFF", "SURE_OFF", "PROBABLY_OFF"):
+                groups[g].append((sl[0], sl[1], typ == "PROBABLY_OFF"))
+        days[day] = groups
+    return oe_payload(days)
+
+
+def read_if():
+    """Prykarpattiaoblenergo: GET schedule-by-queue?queue=X.Y (one response may carry several queues)."""
+    days = {}
+    for g in STANDARD_GROUPS:
+        if days and all(g in groups for groups in days.values()):
+            continue
+        for item in oe_get("https://be-svitlo.oe.if.ua/schedule-by-queue?queue=" + g) or []:
+            dm = _re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", str(item.get("eventDate")))
+            if not dm or not isinstance(item.get("queues"), dict):
+                continue
+            day = days.setdefault((int(dm[3]), int(dm[2]), int(dm[1])), {})
+            for q, ivs in item["queues"].items():
+                if q in STANDARD_GROUPS and q not in day and isinstance(ivs, list):
+                    day[q] = read_intervals("; ".join(f"{i.get('from')}-{i.get('to')}" for i in ivs if isinstance(i, dict)))
+        if not days:
+            break  # nothing published for any day
+    return oe_payload(days)
+
+
+def read_ck():
+    """Cherkasyoblenergo: news posts 'Оновлено графік погодинних відключень (ГПВ) на 17 жовтня'."""
+    base = "https://www.cherkasyoblenergo.com/api/v1/posts"
+    posts = oe_get(f"{base}/main?lang=uk&limit=60").get("data") or []
+    now = time.gmtime(time.time() + 2 * 3600)
+    picked = {}
+    for p in posts:  # newest first: the first post for a day is the latest version
+        title = str(p.get("title") or "")
+        m = _re.search(r"граф[іi]к\w*\s+погодинних\s+відключень.*?\bна\s+(\d{1,2})\s+([а-яіїє]+)", title, _re.I)
+        if not m or m[2].lower() not in UA_MONTHS:
+            continue
+        month = UA_MONTHS[m[2].lower()]
+        year = now.tm_year + (1 if month < now.tm_mon - 6 else 0)
+        day = (year, month, int(m[1]))
+        if day not in picked:
+            picked[day] = p.get("slug")
+    days = {}
+    for day, slug in sorted(picked.items())[-3:]:
+        content = str((oe_get(f"{base}/{slug}?lang=uk").get("data") or {}).get("content") or "")
+        text = _re.sub(r"(?i)</p>|<br\s*/?>|</div>|</li>", "\n", content)  # paragraphs end lines …
+        text = html.unescape(_re.sub(r"<[^>]+>", "", text))  # … other tags may split '10' and ':00'
+        groups = {}
+        for gm in _re.finditer(r"(?<![\d:])([1-6])\.([12])(?![\d:])\s*((?:\d{1,2}\s*:\s*\d{2}\s*[-–]\s*\d{1,2}\s*:\s*\d{2}[\s,;]*)*)", text):
+            groups[f"{gm[1]}.{gm[2]}"] = read_intervals(gm[3])
+        if groups:
+            days[day] = groups
+    return oe_payload(days)
+
+
+OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck}
+
+
+def region_groups(region, data=None):
+    """Queues of a region: today's schedule if published, else the standard 1.1 … 6.2."""
+    data = data or schedule(region)
+    days = days_from_today(data, time.time()) if data else []
+    if days and days[0][1]:
+        return sorted((k[3:] for k in days[0][1]), key=lambda q: [int(x) for x in q.split(".")])
+    return [] if region == "kyiv" else list(STANDARD_GROUPS)
 
 
 def days_from_today(data, now):
@@ -608,7 +801,7 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
             j += 1
         if j < len(seq):
             nxt = {"+": "next_on", "-": "next_off", "?": "next_maybe"}[seq[j]]
-            state += " — " + t[nxt].format(t=(t["tomorrow_word"] if j >= 48 else "") + fmt(j * 30),
+            state += " — " + t[nxt].format(d=t["tomorrow_word"] if j >= 48 else "", t=fmt(j * 30),
                                            left=fmt_left(j * 30 - now_min))
         else:
             state += " — " + t["no_change"]
@@ -783,7 +976,7 @@ class Bot:
         if not a:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
-                   [{"text": t["b_dtek"], "callback_data": "dtek"}],
+                   [{"text": t["b_oe"] if REGIONS[a["region"]].get("source") else t["b_dtek"], "callback_data": "dtek"}],
                    [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_share"], "url": self.share_url(u, a)}]
                    + ([{"text": t["b_site"], "url": site_link(a["region"], a["queue"])}] if SITE_URL else []),
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
@@ -799,7 +992,10 @@ class Bot:
         region = a["region"] if a else u["region"]
         R = REGIONS[region]
         phones = ", ".join(f"<b>{p}</b>" + (t["dtek_free"] if p.startswith("0 800") else "") for p in R["phones"])
-        lines = [t["dtek_title"].format(co=R["co"][u["lang"]]), "", t["dtek_phones"].format(p=phones), t["dtek_bots"]]
+        lines = [t["dtek_title"].format(co=R["co"][u["lang"]]), ""]
+        if R["phones"]:
+            lines.append(t["dtek_phones"].format(p=phones))
+        lines.append(t["dtek_bots"] if R.get("tg") else t["oe_site"])
         if a:
             since = ""
             rep_row = self.db.one("SELECT at FROM reports WHERE chat_id=? AND region=? AND queue=? AND state='off' AND at>=?",
@@ -818,10 +1014,13 @@ class Bot:
         if R.get("city"):
             lines.append(t["dtek_city"].format(n=f"<b>{R['city'][0]}</b>", site=R["city"][2]))
         lines.append(t["dtek_112"])
-        rows = [[{"text": t["b_dtek_tg"], "url": R["tg"]}]]
+        rows = [[{"text": t["b_dtek_tg"], "url": R["tg"]}]] if R.get("tg") else []
         if R.get("viber"):
             rows.append([{"text": t["b_dtek_viber"], "url": R["viber"]}])
-        rows.append([{"text": t["b_dtek_site"], "url": R["dtek"].rsplit("/ua/", 1)[0] + "/ua"}])
+        if R.get("source"):  # an oblenergo: its own site as is
+            rows.append([{"text": "🌐 " + R["co"][u["lang"]], "url": R["dtek"]}])
+        else:
+            rows.append([{"text": t["b_dtek_site"], "url": R["dtek"].rsplit("/ua/", 1)[0] + "/ua"}])
         if R.get("city"):
             rows.append([{"text": t["b_city"].format(n=R["city"][0]), "url": R["city"][1]}])
         rows.append([{"text": t["b_back"], "callback_data": "r"}])
@@ -916,12 +1115,15 @@ class Bot:
         R = REGIONS[u["region"]]
         data = schedule(u["region"])
         days = days_from_today(data, time.time()) if data else []
-        groups = sorted((k[3:] for k in (days[0][1] if days else {})), key=lambda q: [int(x) for x in q.split(".")])
-        rows = [[{"text": t["b_dtek_queue_site"], "url": R["dtek"]}], [{"text": t["b_dtek_queue_bot"], "url": R["tg"]}]]
+        groups = region_groups(u["region"], data)
+        co = R["co"][u["lang"]]
+        rows = [[{"text": t["b_dtek_queue_site"], "url": R["dtek"]}]]
+        if R.get("tg"):
+            rows.append([{"text": t["b_dtek_queue_bot"].format(co=co), "url": R["tg"]}])
         btns = [{"text": q, "callback_data": f"qq:{q}"} for q in groups]
         rows += [btns[i:i + 4] for i in range(0, len(btns), 4)]
         rows.append([{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
-        return t["queue_pick"].format(r=region_name(u["region"], u["lang"])), rows
+        return t["queue_pick"].format(r=region_name(u["region"], u["lang"]), co=co, bot=t["or_bot"] if R.get("tg") else ""), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
     def dnipro_buttons(self, u):
@@ -1141,7 +1343,7 @@ class Bot:
             region, q = parse_start(arg)
             data = schedule(region)
             days = days_from_today(data, time.time()) if data else []
-            if days and queue_key(q) in days[0][1]:
+            if q in region_groups(region, data):
                 label = T[u["lang"]]["queue_label"].format(q=q)
                 if not self.db.one("SELECT 1 FROM addresses WHERE chat_id=? AND region=? AND queue=?", (chat_id, region, q)):
                     if self.add_address(chat_id, label, q, region):
@@ -1176,7 +1378,7 @@ class Bot:
             q = norm_queue(arg)
             data = schedule(u["region"])
             days = days_from_today(data, time.time()) if data else []
-            if not q or not days or queue_key(q) not in days[0][1]:
+            if not q or q not in region_groups(u["region"], data):
                 self.tg.send(chat_id, t["bad_queue"])
             elif self.add_address(chat_id, t["queue_label"].format(q=q), q, u["region"]):
                 self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
@@ -1939,12 +2141,14 @@ def self_test():
     step("Dnipro: asks for town", lambda: cb("rg:dnipro"), lambda s: "населеного пункту" in s)
     step("Dnipro: town", lambda: bot.text(C, "Дніпро"), lambda s: "м. Дніпро" in s)
     step("Dnipro: street", lambda: bot.text(C, "Яворн"), lambda s: "Виберіть вулицю" in s or "Яворницького" in s)
-    if tg.out and tg.out[-1][3]:
-        sid_d = tg.out[-1][3][0][0]["callback_data"].split(":")[1]
+    sid_d = next((b["callback_data"][2:] for o in tg.out[-1:] for r in (o[3] or []) for b in r
+                  if b.get("callback_data", "").startswith("s:")), None)
+    if sid_d:
         step("Dnipro: pick street", lambda: cb(f"s:{sid_d}"), lambda s: "Яворницького" in s)
     step("Dnipro: house 1", lambda: bot.text(C, "1"), lambda s: "Черга" in s or "Виберіть будинок" in s)
-    if tg.out and tg.out[-1][2].startswith(("Виберіть будинок", "Pick")):
-        hid_d = tg.out[-1][3][0][0]["callback_data"].split(":")[1]
+    hid_d = next((b["callback_data"][2:] for o in tg.out[-1:] for r in (o[3] or []) for b in r
+                  if b.get("callback_data", "").startswith("h:")), None)
+    if hid_d and tg.out[-1][2].startswith(("Виберіть будинок", "Pick")):
         step("Dnipro: pick house", lambda: cb(f"h:{hid_d}"), lambda s: "Черга" in s)
     print("     addresses:", [(a["label"], a["queue"], a["region"]) for a in bot.addresses(C)])
     step("reminders across regions run", lambda: bot.notify_tick(), lambda s: True)
@@ -2020,6 +2224,20 @@ def self_test():
             pick_d = res_d[0]["input_message_content"]["message_text"]
             step("Dnipro: picked inline result -> houses", lambda: bot.text(Z, pick_d),
                  lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
+
+    # regions read from the oblenergos' official APIs: pick the region, tap the queue
+    for rg, co in (("mykolaiv", "Миколаївобленерго"), ("lviv", "Львівобленерго"), ("ivano-frankivsk", "Прикарпаттяобленерго"),
+                   ("cherkasy", "Черкасиобленерго")):
+        W = 7000 + len(rg)
+        bot.user(W, "uk")
+        cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
+        step(f"{rg}: pick region -> {co} queue buttons", lambda: cbw(f"rg:{rg}"),
+             lambda s, co=co: any(co in o[2] for o in tg.out) and any(b.get("callback_data") == "qq:1.1" for r in tg.out[-1][3] for b in r))
+        step(f"{rg}: tap 1.1 -> schedule", lambda: cbw("qq:1.1"), lambda s: "Черга 1.1" in s)
+        dv = bot.dtek_view(bot.user(W))
+        ok_dv = co in dv[0] and all(b.get("url") for r in dv[1] for b in r if "url" in b)
+        step(f"{rg}: report view names {co}", lambda: tg.out.append(("send", W, "OK" if ok_dv else "BAD " + dv[0][:120], None)),
+             lambda s: s == "OK")
 
     # links that open a queue, and the share button
     step("link ?start=q4_1 opens queue 4.1", lambda: bot.text(5151, "/start q4_1", "uk"), lambda s: "Черга 4.1" in s)

@@ -10,7 +10,9 @@ tools/dnipro_cache.json, so an interrupted run resumes where it stopped.
 import json
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 import urllib.request
 
@@ -25,6 +27,8 @@ STREET_TYPES = ["вул. ", "пров. ", "просп. ", "пл. ", "бул. ", 
                 "наб", "Без", "мкр", "кв-л", "м-н", "площа", "СТ ", "с/т", "дорога", "алея"]
 NEXT = "абвгґдеєжзиіїйклмнопрстуфхцчшщьюяАБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ0123456789'’-. "
 calls = [0]
+WORKERS = 3          # towns fetched in parallel; more makes YASNO refuse requests (also to the bot itself)
+lock = threading.Lock()
 
 
 def get(ep, **p):
@@ -32,9 +36,11 @@ def get(ep, **p):
     for attempt in range(5):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"}), timeout=30) as r:
-                calls[0] += 1
-                time.sleep(0.12)
-                return json.loads(r.read())
+                data = json.loads(r.read())
+                with lock:
+                    calls[0] += 1
+                time.sleep(0.3)
+                return data
         except Exception as e:
             print("   retry", ep, p.get("query"), e, file=sys.stderr)
             time.sleep(3 * (attempt + 1))
@@ -69,17 +75,23 @@ def main():
     print(f"{len(towns)} towns", flush=True)
     # biggest places first, so the useful part is ready early
     order = sorted(towns, key=lambda i: (not towns[i].startswith("м. "), not towns[i].startswith("смт"), towns[i]))
-    for n, tid in enumerate(order, 1):
-        if tid in cache["streets"]:
-            continue
+    todo = [tid for tid in order if tid not in cache["streets"]]
+    done = [len(order) - len(todo)]
+
+    def one(tid):
         found = {}
         for t in STREET_TYPES:
             crawl_streets(tid, t, found)
-        cache["streets"][tid] = found
-        if n % 10 == 0 or towns[tid].startswith("м. "):
-            json.dump(cache, open(CACHE, "w", encoding="utf-8"), ensure_ascii=False)
-            total = sum(len(v) for v in cache["streets"].values())
-            print(f"  {n}/{len(order)} towns ({towns[tid]}: {len(found)} streets), {total} streets, {calls[0]} requests", flush=True)
+        with lock:
+            cache["streets"][tid] = found
+            done[0] += 1
+            if done[0] % 10 == 0 or towns[tid].startswith("м. "):
+                json.dump(cache, open(CACHE, "w", encoding="utf-8"), ensure_ascii=False)
+                total = sum(len(v) for v in cache["streets"].values())
+                print(f"  {done[0]}/{len(order)} towns ({towns[tid]}: {len(found)} streets), {total} streets, {calls[0]} requests", flush=True)
+
+    with ThreadPoolExecutor(WORKERS) as pool:
+        list(pool.map(one, todo))
     json.dump(cache, open(CACHE, "w", encoding="utf-8"), ensure_ascii=False)
     out = {"built": time.strftime("%Y-%m-%d"), "region": "dnipro",
            "towns": [{"id": int(tid), "value": towns[tid],
