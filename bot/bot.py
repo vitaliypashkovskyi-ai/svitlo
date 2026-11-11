@@ -176,6 +176,9 @@ T = {
         "stale": "⚠️ Дані графіка не оновлювалися {m} хв. Останнє оновлення: {t}.",
         "stale_ok": "✅ Дані графіка знову оновлюються.",
         "myid": "Ваш chat id: <code>{id}</code>\nДодайте в .env: <code>ADMIN_CHAT_ID={id}</code>",
+        "stats": "📊 <b>Статистика бота</b>\n\n👥 Користувачів: <b>{total}</b>\n✅ Активних: {active}\n🚫 Заблокували бота: {blocked}\n"
+                 "🏠 З адресою: {with_addr}\n🔔 З нагадуваннями: {notify}\n🆕 Нових за добу: {d1} · за тиждень: {d7}\n\n"
+                 "📍 <b>Регіони</b>\n{regions}\n\n🗂 Адрес усього: {addrs}\n🔢 Популярні черги: {queues}\n🌐 Мова: {langs}",
         "commands": [("now", "Графік зараз"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
@@ -233,6 +236,9 @@ T = {
         "stale": "⚠️ Schedule data hasn't updated for {m} min. Last update: {t}.",
         "stale_ok": "✅ Schedule data is updating again.",
         "myid": "Your chat id: <code>{id}</code>\nAdd to .env: <code>ADMIN_CHAT_ID={id}</code>",
+        "stats": "📊 <b>Bot stats</b>\n\n👥 Users: <b>{total}</b>\n✅ Active: {active}\n🚫 Blocked the bot: {blocked}\n"
+                 "🏠 With an address: {with_addr}\n🔔 With reminders: {notify}\n🆕 New in 24 h: {d1} · in 7 days: {d7}\n\n"
+                 "📍 <b>Regions</b>\n{regions}\n\n🗂 Addresses in total: {addrs}\n🔢 Top queues: {queues}\n🌐 Language: {langs}",
         "commands": [("now", "Schedule now"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
@@ -281,6 +287,8 @@ class DB:
                 cols = [r[1] for r in self.con.execute(f"PRAGMA table_info({table})")]
                 if "region" not in cols:
                     self.con.execute(f"ALTER TABLE {table} ADD COLUMN region TEXT DEFAULT 'kyiv'")
+            if "joined" not in [r[1] for r in self.con.execute("PRAGMA table_info(users)")]:
+                self.con.execute("ALTER TABLE users ADD COLUMN joined INTEGER")  # v4: when the user first wrote (for /stats)
             self.con.commit()
 
     def q(self, sql, args=()):
@@ -514,8 +522,8 @@ class Bot:
     def user(self, chat_id, lang_code=None):
         u = self.db.one("SELECT * FROM users WHERE chat_id=?", (chat_id,))
         if not u:
-            self.db.q("INSERT INTO users(chat_id, lang) VALUES(?,?)",
-                      (chat_id, "en" if (lang_code or "").startswith("en") else "uk"))
+            self.db.q("INSERT INTO users(chat_id, lang, joined) VALUES(?,?,?)",
+                      (chat_id, "en" if (lang_code or "").startswith("en") else "uk", int(time.time())))
             u = self.db.one("SELECT * FROM users WHERE chat_id=?", (chat_id,))
         elif u["blocked"]:
             self.db.q("UPDATE users SET blocked=0 WHERE chat_id=?", (chat_id,))
@@ -712,10 +720,33 @@ class Bot:
             self.tg.send(chat_id, *self.settings_view(self.user(chat_id)))
         elif cmd == "/myid":
             self.tg.send(chat_id, t["myid"].format(id=chat_id))
+        elif cmd == "/stats" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
+            self.tg.send(chat_id, self.stats_text(u["lang"]))
         elif cmd.startswith("/"):
             self.tg.send(chat_id, t["help"])
         else:
             self.free_text(chat_id, u, m)
+
+    def stats_text(self, lang):
+        """Admin-only summary of who uses the bot (/stats, only for ADMIN_CHAT_ID)."""
+        n = lambda sql, a=(): self.db.one(sql, a)[0]  # noqa: E731
+        now = int(time.time())
+        regions = self.db.q("SELECT region, COUNT(*) c FROM users WHERE blocked=0 GROUP BY region ORDER BY c DESC")
+        queues = self.db.q("SELECT queue, COUNT(DISTINCT chat_id) c FROM addresses GROUP BY queue ORDER BY c DESC, queue LIMIT 5")
+        langs = self.db.q("SELECT lang, COUNT(*) c FROM users WHERE blocked=0 GROUP BY lang ORDER BY c DESC")
+        return T[lang]["stats"].format(
+            total=n("SELECT COUNT(*) FROM users"),
+            active=n("SELECT COUNT(*) FROM users WHERE blocked=0"),
+            blocked=n("SELECT COUNT(*) FROM users WHERE blocked=1"),
+            with_addr=n("SELECT COUNT(DISTINCT u.chat_id) FROM users u JOIN addresses a ON a.chat_id=u.chat_id WHERE u.blocked=0"),
+            notify=n("SELECT COUNT(*) FROM users WHERE blocked=0 AND notify=1"),
+            d1=n("SELECT COUNT(*) FROM users WHERE joined>=?", (now - 86400,)),
+            d7=n("SELECT COUNT(*) FROM users WHERE joined>=?", (now - 7 * 86400,)),
+            regions="\n".join(f"• {region_name(r['region'], lang)}: {r['c']}" for r in regions) or "—",
+            addrs=n("SELECT COUNT(*) FROM addresses"),
+            queues=", ".join(f"{r['queue']} ({r['c']})" for r in queues) or "—",
+            langs=", ".join(f"{r['lang']} {r['c']}" for r in langs) or "—",
+        )
 
     def free_text(self, chat_id, u, m):
         """Plain text: a house number, a street name or (in regions with towns) a town name."""
@@ -1213,6 +1244,13 @@ def self_test():
     step("language", lambda: cb("sl"), lambda s: "Settings" in s)
     cb("sl")
     step("bad queue", lambda: bot.text(C, "/queue 99"), lambda s: "Не знаю" in s)
+    global ADMIN_CHAT_ID
+    saved_admin, ADMIN_CHAT_ID = ADMIN_CHAT_ID, ""
+    step("/stats hidden from non-admins", lambda: bot.text(C, "/stats"), lambda s: "Статистика" not in s)
+    ADMIN_CHAT_ID = str(C)
+    step("/stats for admin", lambda: bot.text(C, "/stats"), lambda s: "Статистика" in s)
+    print("     " + tg.out[-1][2].replace("\n", " / ")[:300] if tg.out else "")
+    ADMIN_CHAT_ID = saved_admin
     if STREETS:
         step("list: letters", lambda: cb("L"), lambda s: "літеру" in s)
         print("     letters:", "".join(btns()))
