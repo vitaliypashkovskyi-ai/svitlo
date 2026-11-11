@@ -113,6 +113,9 @@ REGIONS = {
     "kharkiv": {"uk": "Харківська область", "en": "Kharkiv region", "yasno": None, "cities": False, "source": "kh",
                 "dtek": "https://oblenergo.kharkiv.ua/uk", "co": {"uk": "Харківобленерго", "en": "Kharkivoblenergo"},
                 "phones": ["0 800 508 413", "057 34 24 413"], "tg": None, "viber": None, "city": None},
+    "kirovohrad": {"uk": "Кіровоградська область", "en": "Kirovohrad region", "yasno": None, "cities": False, "source": "kr",
+                   "dtek": "https://kiroe.com.ua/energy/emergency", "co": {"uk": "Кіровоградобленерго", "en": "Kirovohradoblenergo"},
+                   "phones": ["0 800 501 148"], "tg": None, "viber": None, "city": None},
     "chernivtsi": {"uk": "Чернівецька область", "en": "Chernivtsi region", "yasno": None, "cities": False, "source": "cv",
                    "groups": [str(i) for i in range(1, 13)],  # 12 queues, no subqueues
                    "dtek": "https://oblenergo.cv.ua/shutdowns/", "co": {"uk": "Чернівціобленерго", "en": "Chernivtsioblenergo"},
@@ -140,7 +143,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.25"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.26"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -908,8 +911,43 @@ def read_cv():
     return oe_payload(days)
 
 
+def read_kr():
+    """Kirovohradoblenergo: its site is behind a browser check, so the schedule comes from the public preview of
+    the official Oleksandriia district channel (t.me/s/…), which posts the oblast's whole schedule as text:
+    '12.11.2026 за розпорядженням НЕК "Укренерго" буде діяти …' then 'Черга 1.1: 02-04, 10-12' ('-' = none).
+    Newest post per day wins; queues a post leaves out have no outages; forecasts are skipped."""
+    page = oe_page("https://t.me/s/SvitloOleksandriyskohoRaionu")
+    posts = []
+    for body in _re.findall(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', page, _re.S):
+        posts.append(html.unescape(_re.sub(r"<[^>]+>", "", _re.sub(r"(?i)<br\s*/?>", "\n", body))))
+    days = {}
+    for text in reversed(posts):  # the preview lists oldest first
+        if _re.search(r"прогноз", text, _re.I):
+            continue
+        dm = (_re.search(r"(\d{2})\.(\d{2})\.(\d{4})[^\n]{0,15}?за\s+розпорядженням", text)
+              or _re.search(r"Укренерго\W{0,3}\s*(\d{2})\.(\d{2})\.(\d{4})", text))
+        if not dm:
+            continue
+        day = (int(dm[3]), int(dm[2]), int(dm[1]))
+        if day in days:
+            continue
+        if _re.search(r"застосування\s+графіка[^\n]{0,80}скасовано", text, _re.I):
+            days[day] = {g: [] for g in STANDARD_GROUPS}
+            continue
+        groups = {}
+        for g1, g2, rest in _re.findall(r"Черга\s*([1-6])\s*\.\s*([12])\s*:\s*([^\n]*)", text):
+            ivs = []
+            for h1, m1, h2, m2 in _re.findall(r"(?<![\d:])(\d{1,2})(?::(\d{2}))?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?(?![\d:])", rest):
+                a, b = _hm(h1, m1 or 0), _hm(h2, m2 or 0)
+                ivs.append((a, 1440 if b <= a else b, False))
+            groups[f"{g1}.{g2}"] = ivs
+        if groups:
+            days[day] = {g: groups.get(g, []) for g in STANDARD_GROUPS}
+    return oe_payload(dict(sorted(days.items())[-3:]))
+
+
 OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
-              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv}
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr}
 
 
 def region_groups(region, data=None):
@@ -2799,7 +2837,7 @@ def self_test():
                        ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
                        ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
                        ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
-                       ("chernivtsi", "Чернівціобленерго", "1")):
+                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
