@@ -87,7 +87,7 @@ REGIONS = {
               "phones": ["0 800 409 090", "(048) 705 90 90"], "tg": "https://t.me/DTEKOdeskiElektromerezhiBot",
               "viber": "https://chats.viber.com/dtekodeskielektromerezhi", "city": None},
     # read straight from each oblenergo's official API ("source"); no address search there
-    "lviv": {"uk": "Львівська область", "en": "Lviv region", "yasno": None, "cities": False, "source": "loe",
+    "lviv": {"uk": "Львівська область", "en": "Lviv region", "yasno": None, "cities": False, "source": "loe", "lookup": "loe",
              "dtek": "https://poweron.loe.lviv.ua", "co": {"uk": "Львівобленерго", "en": "Lvivoblenergo"},
              "phones": [], "tg": None, "viber": None, "city": None},
     "mykolaiv": {"uk": "Миколаївська область", "en": "Mykolaiv region", "yasno": None, "cities": False, "source": "mk",
@@ -123,7 +123,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.18"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.19"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -277,7 +277,10 @@ T = {
         "b_share": "📤 Поділитися",
         "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
-        "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
+        "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
+        "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
+        "loe_no_queue": "Для будинку {h} {co} не вказує черги графіка ({v}). Виберіть чергу кнопками або перевірте на сайті {co}.",
+        "loe_busy": "Довідник адрес {co} зараз не відповідає. Спробуйте за хвилину або виберіть чергу кнопками.", "b_dtek_tg": "💬 Чат-бот ДТЕК (Telegram)", "b_dtek_viber": "💬 Viber ДТЕК",
         "b_dtek_site": "🌐 Сайт ДТЕК", "b_city": "🏙 Звернення {n} (Telegram)",
         "dtek_title": "<b>Повідомити {co}</b>\nЗаявку подаєте ви самі — так вона потрапить у роботу ДТЕК.",
         "dtek_phones": "📞 Телефони: {p}", "dtek_free": " (безкоштовно)",
@@ -381,7 +384,10 @@ T = {
         "b_share": "📤 Share",
         "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
-        "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
+        "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
+        "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
+        "loe_no_queue": "{co} lists no schedule queue for house {h} ({v}). Pick the queue with the buttons or check on the {co} website.",
+        "loe_busy": "The {co} address directory isn't responding. Try again in a minute or pick the queue with the buttons.", "b_dtek_tg": "💬 DTEK chatbot (Telegram)", "b_dtek_viber": "💬 DTEK on Viber",
         "b_dtek_site": "🌐 DTEK website", "b_city": "🏙 City request {n} (Telegram)",
         "dtek_title": "<b>Report to {co}</b>\nPlease send the report yourself — that's how it gets to DTEK's crews.",
         "dtek_phones": "📞 Phone: {p}", "dtek_free": " (free)",
@@ -1123,7 +1129,8 @@ class Bot:
         btns = [{"text": q, "callback_data": f"qq:{q}"} for q in groups]
         rows += [btns[i:i + 4] for i in range(0, len(btns), 4)]
         rows.append([{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
-        return t["queue_pick"].format(r=region_name(u["region"], u["lang"]), co=co, bot=t["or_bot"] if R.get("tg") else ""), rows
+        text = t["queue_pick"].format(r=region_name(u["region"], u["lang"]), co=co, bot=t["or_bot"] if R.get("tg") else "")
+        return text + (t["lookup_hint"] if R.get("lookup") else ""), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
     def dnipro_buttons(self, u):
@@ -1436,6 +1443,12 @@ class Bot:
         """Plain text: a house number, a street name or (in regions with towns) a town name."""
         st = self.state(u)
         R = REGIONS[u["region"]]
+        if R.get("lookup") == "loe":
+            if st.get("street"):
+                return self.loe_house_text(chat_id, u, m)
+            if st.get("city"):
+                return self.loe_streets(chat_id, u, m)
+            return self.loe_cities(chat_id, u, m)
         if not R["yasno"]:
             return self.ask_address(chat_id, u)
         if st.get("street"):
@@ -1443,6 +1456,115 @@ class Bot:
         if R["cities"] and not st.get("city"):
             return self.search_cities(chat_id, u, m)
         return self.search_streets(chat_id, u, m)
+
+    # ---------- Lvivoblenergo directory (power-api.loe.lviv.ua): town -> street -> buildings with their queue
+    def loe_get(self, path, **params):
+        q = urllib.parse.urlencode({"pagination": "false", **params})
+        return http_json(f"https://power-api.loe.lviv.ua/api/{path}?{q}", timeout=60)
+
+    def loe_cities(self, chat_id, u, q):
+        t = T[u["lang"]]
+        if len(q) < 2:
+            return self.tg.send(chat_id, t["no_cities"])
+        try:
+            res = [c for c in self.loe_get("pw_cities", name=q[:60]) if isinstance(c, dict) and c.get("id") and c.get("name")]
+        except Exception:
+            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]]))
+        if not res:
+            return self.tg.send(chat_id, t["no_cities"])
+        label = lambda c: c["name"] + (f" ({c['otg']['name']} громада)" if isinstance(c.get("otg"), dict) and c["otg"].get("name") else "")  # noqa: E731
+        self.set_state(chat_id, {"cities": {str(c["id"]): label(c) for c in res[:30]}})
+        exact = [c for c in res if c["name"].lower() == q.lower()]
+        if len(res) == 1 or len(exact) == 1:
+            return self.pick_city(chat_id, self.user(chat_id), str((exact or res)[0]["id"]))
+        self.tg.send(chat_id, t["pick_city"], [[{"text": label(c)[:60], "callback_data": f"c:{c['id']}"}] for c in res[:30]])
+
+    def loe_streets(self, chat_id, u, q):
+        t = T[u["lang"]]
+        st = self.state(u)
+        if len(q) < 2:
+            return self.tg.send(chat_id, t["short"])
+        try:
+            res = [x for x in self.loe_get("pw_streets", **{"city.id": st["city"]["id"], "name": q[:60]})
+                   if isinstance(x, dict) and x.get("id") and x.get("name")]
+        except Exception:
+            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]]))
+        if not res:
+            return self.tg.send(chat_id, t["no_streets"])
+        res.sort(key=lambda x: (not x["name"].lower().startswith(q.lower()), ua_key(x["name"])))
+        self.set_state(chat_id, {"city": st["city"], "streets": {str(x["id"]): x["name"] for x in res[:30]}})
+        exact = [x for x in res if x["name"].lower() == q.lower()]
+        if len(res) == 1 or len(exact) == 1:
+            return self.loe_pick_street(chat_id, self.user(chat_id), str((exact or res)[0]["id"]))
+        self.tg.send(chat_id, t["pick_street"], [[{"text": x["name"][:60], "callback_data": f"s:{x['id']}"}] for x in res[:30]])
+
+    def loe_buildings(self, city_id, street_id):
+        """{building: queue or other value} — the most common chergGpv of the building's consumers. Cached a day."""
+        key = f"loe:bld:{city_id}:{street_id}"
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < 86400:
+            return json.loads(row["value"])
+        try:
+            rows = self.loe_get("pw_accounts", **{"city.id": city_id, "street.id": street_id})
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+        counts = {}
+        for x in rows if isinstance(rows, list) else []:
+            name = str(x.get("buildingName") or "").strip()[:30] if isinstance(x, dict) else ""
+            if not name:
+                continue
+            v = str(x.get("chergGpv") or "").strip()[:40]
+            counts.setdefault(name, {})
+            if v:
+                counts[name][v] = counts[name].get(v, 0) + 1
+        out = {b: (max(c, key=lambda k: (k in STANDARD_GROUPS, c[k])) if c else "") for b, c in counts.items()}
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(out, ensure_ascii=False), int(time.time())))
+        return out
+
+    def loe_pick_street(self, chat_id, u, sid, message_id=None):
+        t = T[u["lang"]]
+        st = self.state(u)
+        name = st.get("streets", {}).get(sid)
+        if not name or not st.get("city"):
+            return
+        wait = t["loading_houses"].format(street=html.escape(name))
+        if message_id:
+            self.tg.edit(chat_id, message_id, wait)
+        else:
+            res = self.tg.send(chat_id, wait)
+            message_id = (res or {}).get("result", {}).get("message_id") if isinstance(res, dict) else None
+        try:
+            blds = self.loe_buildings(st["city"]["id"], sid)
+        except Exception:
+            text = t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]])
+            return self.tg.edit(chat_id, message_id, text) if message_id else self.tg.send(chat_id, text)
+
+        def natural(b):
+            n = ""
+            for ch in b:
+                if not ch.isdigit():
+                    break
+                n += ch
+            return (int(n) if n else 10 ** 9, b)
+        order = sorted(blds, key=natural)
+        st = {"city": st["city"], "street": {"id": sid, "name": name},
+              "houses": {str(i): b for i, b in enumerate(order)}, "house_order": [str(i) for i in range(len(order))],
+              "loe_q": {str(i): blds[b] for i, b in enumerate(order)}}
+        self.set_state(chat_id, st)
+        view = self.houses_view(self.user(chat_id), 1)
+        return self.tg.edit(chat_id, message_id, *view) if message_id else self.tg.send(chat_id, *view)
+
+    def loe_house_text(self, chat_id, u, q):
+        st = self.state(u)
+        hit = next((k for k, v in st.get("houses", {}).items() if v.lower() == q.strip().lower()), None)
+        if hit:
+            return self.pick_house(chat_id, u, hit)
+        if not any(ch.isdigit() for ch in q):  # a new street name
+            self.set_state(chat_id, {"city": st["city"]})
+            return self.loe_streets(chat_id, self.user(chat_id), q)
+        self.tg.send(chat_id, T[u["lang"]]["no_houses"].format(q=html.escape(q)))
 
     def search_cities(self, chat_id, u, q):
         t = T[u["lang"]]
@@ -1496,6 +1618,8 @@ class Bot:
         self.tg.send(chat_id, t["pick_street"], [[{"text": s["value"][:60], "callback_data": f"s:{s['id']}"}] for s in res[:30]])
 
     def pick_street(self, chat_id, u, sid, message_id=None):
+        if REGIONS[u["region"]].get("lookup") == "loe":
+            return self.loe_pick_street(chat_id, u, sid, message_id)
         t = T[u["lang"]]
         st = self.state(u)
         name = st.get("streets", {}).get(sid)
@@ -1634,6 +1758,19 @@ class Bot:
         house = st.get("houses", {}).get(hid)
         if not house or not st.get("street"):
             return
+        if REGIONS[u["region"]].get("lookup") == "loe":
+            value = st.get("loe_q", {}).get(hid, "")
+            co = REGIONS[u["region"]]["co"][u["lang"]]
+            if value not in STANDARD_GROUPS:
+                return self.tg.send(chat_id, t["loe_no_queue"].format(h=html.escape(house), co=co, v=html.escape(value or "—")),
+                                    self.queue_pick_view(u)[1])
+            town = st["city"]["name"].split(" (")[0]
+            label = f"{town}, {st['street']['name']}, {house}"
+            if not self.add_address(chat_id, label, value, u["region"]):
+                return
+            if message_id:
+                self.tg.edit(chat_id, message_id, t["addr_saved"].format(label=html.escape(label), q=value))
+            return self.tg.send(chat_id, *self.status_view(self.user(chat_id)))
         try:
             town = {"cityId": st["city"]["id"]} if st.get("city") else {}
             g = self.yasno("group", u["region"], streetId=st["street"]["id"], houseId=hid, **town)
@@ -2238,6 +2375,17 @@ def self_test():
         ok_dv = co in dv[0] and all(b.get("url") for r in dv[1] for b in r if "url" in b)
         step(f"{rg}: report view names {co}", lambda: tg.out.append(("send", W, "OK" if ok_dv else "BAD " + dv[0][:120], None)),
              lambda s: s == "OK")
+
+    # Lviv region: address search in Lvivoblenergo's official directory
+    V = 7700
+    bot.user(V, "uk")
+    bot.set_user(V, region="lviv")
+    step("Lviv: town 'Львів'", lambda: bot.text(V, "Львів"), lambda s: "Львів" in s)
+    step("Lviv: street 'Наукова' -> house buttons", lambda: bot.text(V, "Наукова"), lambda s: "Наукова" in s)
+    h96 = next((k for k, v in bot.state(bot.user(V)).get("houses", {}).items() if v == "96"), None)
+    if h96:
+        step("Lviv: house 96 -> its queue", lambda: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": V}, "message_id": 4}, "data": f"h:{h96}"}),
+             lambda s: "Черга" in s and "Наукова, 96" in s)
 
     # links that open a queue, and the share button
     step("link ?start=q4_1 opens queue 4.1", lambda: bot.text(5151, "/start q4_1", "uk"), lambda s: "Черга 4.1" in s)
