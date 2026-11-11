@@ -12,7 +12,7 @@ Settings (environment or .env next to this file):
     BOT_TOKEN       token from @BotFather (required to run)
     ADMIN_CHAT_ID   your chat id for "data is stale" alerts (send /myid to the bot)
     DATA_DIR        where bot.db lives (default ./data)
-    SITE_URL        website link (default GitHub Pages)
+    SITE_URL        website link for the "Website" button (empty = no button)
 """
 import html
 import json
@@ -45,7 +45,7 @@ load_env()
 TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(HERE, "data"))
-SITE_URL = os.environ.get("SITE_URL", "https://vitaliypashkovskyi-ai.github.io/svitlo/")
+SITE_URL = os.environ.get("SITE_URL", "").strip()  # the public site was taken down on 2026-11-11
 DATA_BASE = "https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/"
 YASNO = "https://app.yasno.ua/api/blackout-service/public/shutdowns/addresses/v2"
 # Regions with DTEK schedules. yasno: (regionId, dsoId) for address search; cities: search asks for the town first.
@@ -91,7 +91,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-11.9"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-11.10"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -700,7 +700,8 @@ class Bot:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
                    [{"text": t["b_dtek"], "callback_data": "dtek"}],
-                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_site"], "url": site_link(a["region"], a["queue"])}],
+                   [{"text": t["b_refresh"], "callback_data": "r"}]
+                   + ([{"text": t["b_site"], "url": site_link(a["region"], a["queue"])}] if SITE_URL else []),
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
         text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
         line = self.crowd_line(a["region"], a["queue"], u["lang"], now)

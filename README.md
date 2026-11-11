@@ -4,7 +4,7 @@
 
 Live outage schedule for DTEK Kyiv Electric Networks queues, in Ukrainian and English.
 
-**Сайт:** https://vitaliypashkovskyi-ai.github.io/svitlo/
+Публічний сайт на GitHub Pages тимчасово вимкнено (11.11.2026). Сайт працює в домашній мережі на QNAP, бот — у Telegram.
 
 ## Регіони
 
