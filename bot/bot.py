@@ -124,6 +124,9 @@ REGIONS = {
     "khmelnytskyi": {"uk": "Хмельницька область", "en": "Khmelnytskyi region", "yasno": None, "cities": False, "source": "hoe", "lookup": "hoa",
                      "dtek": "https://hoe.com.ua/post/novini-kompaniji", "co": {"uk": "Хмельницькобленерго", "en": "Khmelnytskoblenergo"},
                      "phones": ["067 010 50 62", "050 010 50 62", "0 800 50 50 62"], "tg": None, "viber": None, "city": None},
+    "sumy": {"uk": "Сумська область", "en": "Sumy region", "yasno": None, "cities": False, "source": "soe",
+             "dtek": "https://www.soe.com.ua/press-service/news", "co": {"uk": "Сумиобленерго", "en": "Sumyoblenergo"},
+             "phones": ["0 800 300 247", "0542 659 659"], "tg": None, "viber": None, "city": None},
     "ternopil": {"uk": "Тернопільська область", "en": "Ternopil region", "yasno": None, "cities": False, "source": "none", "lookup": "loe",
                  "noschedule": True,  # the operator shows hours only per address on its own site
                  "dtek": "https://poweron.toe.com.ua/", "co": {"uk": "Тернопільобленерго", "en": "Ternopiloblenergo"},
@@ -160,7 +163,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.24"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.25"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1147,6 +1150,186 @@ def read_hoe():
     return oe_payload(dict(sorted(days.items())[-3:]))
 
 
+
+# ---- Sumyoblenergo: the schedule is a picture with the hours written in digits; read glyph by glyph against samples
+# cut from the operator's own pictures, and cross-checked with the duration printed under every interval
+SUMY_GLYPHS = json.loads(r"""{"t":{"1":["9:f,1f,7f,ff,1ff,1ff,cf,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f,f"],"0":["15:7f0,ff8,1ffc,3e3e,3c1e,7c0f,780f,780f,780f,780f,780f,780f,780f,780f,780f,780f,780f,3c1f,3c1e,3ffe,1ffc,ff8,3e0","16:fe0,1ff8,3ffc,7e7c,783e,781e,f01e,f01e,f01f,f00f,f00f,f00f,f00f,f01f,f01f,f01e,f81e,781e,7c3e,3ffc,3ff8,1ff0,7c0","16:7f0,1ff8,3ffc,3e7e,7c1e,781f,780f,780f,780f,f80f,f80f,f80f,f80f,780f,780f,780f,781f,7c1e,3c3e,3ffe,1ffc,ff8,3e0","16:7f0,1ff8,3ffc,3e7e,7c1e,781f,780f,780f,780f,f80f,f80f,f80f,f80f,f80f,780f,780f,781f,7c1e,3c3e,3ffe,1ffc,ff8,3e0","16:fe0,1ff8,3ff8,7e7c,783c,f81e,f01e,f01e,f01e,f01e,f01f,f01f,f01e,f01e,f01e,f01e,f01e,f83e,7c3c,7ffc,3ff8,1ff0,7c0","16:fe0,1ff8,3ffc,7e7c,783e,781e,f81e,f01e,f01f,f01f,f00f,f00f,f00f,f01f,f01f,f01e,f81e,781e,7c3e,3ffc,3ff8,1ff0,7c0"],":":["6:0,0,0,0,0,1e,1e,3f,1e,1e,0,0,0,0,0,0,0,0,1e,1e,3f,1e,1e","6:0,0,0,0,0,1e,1e,3f,1e,1e,0,0,0,0,0,0,0,0,1e,3e,3f,1e,1e"],"-":["9:0,0,0,0,0,0,0,0,0,0,0,0,1fe,1ff,1ff,1fe,0,0,0,0,0,0,0"],"4":["17:78,f8,1f8,3f8,3f8,7f8,ff8,f78,1e78,3e78,3c78,7878,f878,1f078,1ffff,1ffff,1ffff,1ffff,78,78,78,78,78","17:78,f8,1f8,1f8,3f8,7f8,7f8,f78,1f78,3e78,3c78,7878,f878,f078,1ffff,1ffff,1ffff,1ffff,78,78,78,78,38","17:78,f8,1f8,3f8,3f8,7f8,ff8,f78,1e78,3e78,7c78,7878,f878,1f078,1ffff,1ffff,1ffff,1ffff,78,78,78,78,78"],"6":["15:1fe,7fe,ffe,1f80,3e00,3c00,3c00,7c00,7bf8,7ffc,7ffe,7fff,7c0f,780f,780f,780f,780f,3c0f,3e1f,1fff,1ffe,ffc,3f0","15:3fe,7fe,ffe,1f00,3e00,3c00,7c00,7800,7bf0,7ffc,7ffe,7ffe,7c1f,780f,780f,780f,780f,7c0f,3c1f,3ffe,1ffe,ffc,3f0","16:3fc,ffc,1ffc,3f00,7c00,7800,7800,f800,f7f0,fff8,fffc,fffe,f81e,f01e,f01f,f01f,f01e,781e,7c3e,3ffe,3ffc,1ff8,7e0","15:3fe,7fe,ffe,1f00,3e00,3c00,7c00,7800,7bf8,7ffc,7ffe,7fff,7c1f,780f,780f,780f,780f,7c0f,3c1f,3ffe,1ffe,ffc,3f0"],"2":["16:ff0,3ff8,7ffc,7c7e,301e,1e,1e,1e,1e,3c,7c,78,f0,3f0,7e0,fc0,1f80,1f00,3e00,7fff,ffff,ffff,7fff","16:ff0,3ff8,7ffc,7c7e,301e,1e,1e,1e,1e,3c,7c,f8,f0,3f0,7e0,fc0,1f80,3f00,3e00,7fff,ffff,ffff,7fff","15:ff0,3ffc,7ffc,7c3e,301e,1e,1e,1e,1e,3e,3c,78,f8,1f0,3e0,7c0,f80,1f00,3e00,7fff,7fff,7fff,7fff"],"8":["15:ff8,1ffc,3ffe,3e1e,7c1f,7c0f,7c1f,3c1e,3f7e,1ffc,ff8,1ffc,3ffe,7e3f,7c0f,780f,780f,780f,7c0f,7fff,3ffe,1ffc,7f0","16:ff8,1ffc,3ffe,7c3e,781e,781f,781e,3c1e,3e7e,1ffc,ff8,1ff8,3ffe,7c3e,781f,780f,f80f,f80f,781f,7fff,3ffe,1ffc,7f0","15:ff8,1ffc,3ffe,3e1e,7c1f,780f,3c1f,3c1e,3f3e,1ffc,ff8,1ffc,3ffe,3e3f,780f,780f,780f,780f,7c0f,7f7f,3ffe,1ffc,7f0","16:ff8,1ffc,3ffe,7c3e,781e,781e,781e,3c1e,3e7e,1ffc,ff0,1ff8,3ffe,7c3e,781f,780f,f80f,780f,781f,7fff,3ffe,1ffc,7f0"],"04":["34:1fc00078,7fe000f8,fff001f8,f9f803f8,1f07803f8,1e07c07f8,1e03c0ff8,1e03c0f78,1e03c1e78,3e03c3e78,3e03c7c78,3e03c7878,3e03cf878,3e03df078,1e03dffff,1e03fffff,1e07fffff,1f079ffff,f0f80078,fff80078,7ff00078,3fe00078,f800078","34:1fc00078,7fe000f8,fff001f8,f9f803f8,1f07803f8,1e07c07f8,1e03c0ff8,1e03c0f78,1e03c1e78,3e03c3e78,3e03c3c78,3e03c7878,3e03cf878,1e03df078,1e03dffff,1e03fffff,1e07dffff,1f079ffff,f0f80078,fff80078,7ff00078,3fe00078,f800078"],"5":["15:3ffe,3ffe,3ffe,3ffc,3c00,3c00,3c00,3c00,3fe0,3ff8,3ffc,3ffe,1f,f,f,f,f,f,601f,7ffe,7ffc,7ff8,1fe0"]},"d":{"4":["14:18,38,78,78,d8,198,398,318,618,e18,c18,1818,3018,3fff,3fff,18,18,18,18,0,0,0,0,0"],"г":["9:0,0,0,0,0,1ff,1ff,180,180,180,180,180,180,180,180,180,180,180,180,0,0,0,0,0"],"о":["13:0,0,0,0,0,1f0,7fc,e0e,c07,1c03,1803,1803,1803,1803,1c03,c07,e0e,7fc,1f0,0,0,0,0,0","13:0,0,0,0,0,1f8,7fc,e0e,c07,1c03,1803,1803,1803,1803,1c03,c07,e0e,7fc,1f8,0,0,0,0,0"],"д":["15:0,0,0,0,0,3fc,3fc,31c,31c,31c,31c,61c,61c,61c,c1c,c1c,181c,7fff,7fff,7007,7007,7007,7007,7007"],".":["4:0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,7,f,6,0,0,0,0,0","3:0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,7,7,7,0,0,0,0,0"],"0":["13:1f0,7f8,60c,e06,c06,c07,1c07,1c03,1803,1803,1803,1c03,1c07,c07,c06,e06,60c,3fc,1f0,0,0,0,0,0","13:3f0,7f8,e1c,c0c,1c06,1806,1806,1806,1806,1807,1806,1806,1806,1806,1c06,c0c,e1c,7f8,1f0,0,0,0,0,0","13:1f0,7fc,70c,e06,c06,1c07,1c07,1c03,1803,1803,1803,1c03,1c07,c07,c06,e06,70c,3fc,1f0,0,0,0,0,0"],"х":["12:0,0,0,0,0,e07,606,30e,39c,1d8,f0,f0,f0,f8,198,38c,70e,607,c03,0,0,0,0,0"],"в":["12:0,0,0,0,0,ff8,ffe,c06,c06,c06,c0e,ff8,ffc,c06,c03,c03,c07,ffe,ff8,0,0,0,0,0"],"2":["12:1f8,7fc,e0e,6,7,7,6,6,c,1c,38,70,e0,1c0,380,700,e00,fff,fff,0,0,0,0,0"],"1":["7:7,f,3f,73,63,3,3,3,3,3,3,3,3,3,3,3,3,3,3,0,0,0,0,0"]},"l":{"1":["14:3f,7f,ff,3ff,7ff,fff,1fff,3fff,3f3f,1e3f,1c3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3f,3e"],".":["7:0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3e,7f,7f,7f,7f,7f,3e"],"2":["24:3ff00,1fffc0,3ffff0,fffff0,fffff8,7c01fc,3800fc,fc,7c,7c,7c,fc,fc,f8,1f8,3f8,3f0,7e0,fe0,1fc0,3f80,7f00,fe00,1fc00,3f800,7f000,fe000,1fc000,3f8000,7f0000,ff0000,ffffff,ffffff,ffffff,ffffff,fffffe","24:3ff00,1fffc0,3ffff0,fffff0,fffff8,7c01fc,3800fc,2000fc,7c,7c,7c,fc,fc,f8,1f8,3f8,3f0,7e0,fe0,1fc0,3f80,7f00,fe00,1fc00,3f800,7f000,fe000,1fc000,3f8000,7f0000,ff0000,ffffff,ffffff,ffffff,ffffff,fffffe"],"3":["24:3ffc0,ffff0,3ffff8,7ffffc,7ffffc,3e00fe,38007e,7e,3e,3e,3e,7e,7e,1fc,7f8,3fff0,3ffe0,3fff0,3fff8,3fffc,1fe,7f,3f,1f,1f,1f,1f,3f,3f,c0007f,f800fe,fffffe,fffffc,fffff8,7fffe0,1fff00"],"4":["27:7e0,7e0,fe0,1fe0,1fe0,3fe0,7fe0,ffe0,ffe0,1fbe0,3f3e0,3e3e0,7e3e0,fc3e0,f83e0,1f83e0,3f03e0,7e03e0,7c03e0,fc03e0,1f803e0,1f003e0,3f003e0,7ffffff,7ffffff,7ffffff,7ffffff,7ffffff,3e0,3e0,3e0,3e0,3e0,3e0,3e0,3e0"],"5":["23:1ffffc,1ffffc,1ffffc,1ffffc,1ffffc,1f0000,1f0000,1f0000,1f0000,1f0000,1f0000,1f0000,3f0000,3f3c00,3fffc0,3ffff0,3ffffc,1ffffe,f07fe,ff,3f,3f,1f,1f,1f,1f,1f,3f,3f,60007e,7c01fe,7ffffc,7ffff8,7ffff0,3fffe0,7ff00"],"6":["24:3ff8,fff8,3fff8,7fff8,ffc18,fe000,1f8000,3f8000,3f0000,3e0000,7e0000,7c0000,7c0000,7c7f80,fdffe0,fffff8,fffffc,fffffc,ff80fe,fe007e,fc003e,fc003f,fc003f,fc003f,fc003f,fc003f,7c003f,7e003f,7e003e,3f007e,3f81fc,1ffffc,ffff8,7fff0,3ffe0,ff80"]}}""")
+_SOE_BOX = (bytes((241, 241, 241)), bytes((255, 249, 205)))
+_soe_cache = {}
+
+
+def _soe_bm(e):
+    w, rows = e.split(":")
+    return tuple(format(int(r, 16), "b").zfill(int(w)).replace("1", "#").replace("0", ".") for r in rows.split(","))
+
+
+_SOE_T = {k: {ch: [_soe_bm(e) for e in v] for ch, v in kinds.items()} for k, kinds in SUMY_GLYPHS.items()}
+
+
+def _soe_dist(a, b):
+    if len(a) != len(b) or abs(len(a[0]) - len(b[0])) > 2:
+        return 10 ** 9
+    wa, wb = len(a[0]), len(b[0])
+    W = max(wa, wb) + 2
+    best = 10 ** 9
+    for s_ in (-1, 0, 1):
+        d = 0
+        for ra, rb in zip(a, b):
+            pa = ("." + ra + "." * W)[:W]
+            pb = ("." * (1 + s_) + rb + "." * W)[:W] if s_ >= 0 else (rb + "." * W)[:W]
+            d += sum(1 for p, q in zip(pa, pb) if p != q)
+        best = min(best, d)
+    return best
+
+
+def _soe_read_line(glyphs, kind):
+    out = ""
+    for bm in glyphs:
+        sc = sorted((min(_soe_dist(bm, t) for t in ts), ch) for ch, ts in _SOE_T[kind].items())
+        if sc[0][0] > max(3, len(bm) * len(bm[0]) * 0.08) or (len(sc) > 1 and sc[1][0] - sc[0][0] < 3):
+            return None  # a glyph we don't know: don't guess
+        out += sc[0][1]
+    return out
+
+
+def _soe_glyphs(rows, x0, x1, ta, tb, ink):
+    xs = [x for x in range(x0, x1) if any(ink(x, y) for y in range(ta, tb + 1))]
+    runs, cur = [], []
+    for x in xs:
+        if cur and x != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(x)
+    if cur:
+        runs.append(cur)
+    return [tuple("".join("#" if ink(x, y) else "." for x in range(c[0], c[-1] + 1)) for y in range(ta, tb + 1)) for c in runs]
+
+
+def _soe_bands(ys):
+    groups = []
+    for y in ys:
+        if groups and y - groups[-1][-1] <= 2:
+            groups[-1].append(y)
+        else:
+            groups.append([y])
+    return groups
+
+
+def soe_png(png):
+    """{group: [(from, to, False)]} from a Sumyoblenergo picture, or None when anything doesn't read or doesn't add up."""
+    w, h, rows = png_rgb(png)
+    px = lambda x, y: rows[y][3 * x:3 * x + 3]  # noqa: E731
+    cols = set()
+    for y in range(h):
+        x = 0
+        while x < w:
+            c = px(x, y)
+            if c in _SOE_BOX:
+                j = x
+                while j < w and px(j, y) == c:
+                    j += 1
+                if j - x >= 150:
+                    cols.add((x, j))
+                x = j
+            else:
+                x += 1
+    merged = []
+    for x0, x1 in sorted(cols):
+        if merged and x0 < merged[-1][1]:
+            merged[-1] = (min(merged[-1][0], x0), max(merged[-1][1], x1))
+        else:
+            merged.append((x0, x1))
+    boxes = []
+    for x0, x1 in merged:
+        inside = None
+        for y in range(h + 1):
+            n = sum(1 for x in range(x0, x1) if px(x, y) in _SOE_BOX) if y < h else 0
+            if n >= (x1 - x0) * 0.15 and inside is None:
+                inside = y
+            elif n < (x1 - x0) * 0.15 and inside is not None:
+                if y - inside > 60:
+                    boxes.append((x0, inside, x1, y - 1))
+                inside = None
+    white = lambda x, y: min(px(x, y)) > 200  # noqa: E731
+    lab_rows = [y for y in range(h) if 0 < sum(1 for x in range(45, 185) if white(x, y)) < 84]
+    labels = []
+    for g in _soe_bands(lab_rows):
+        if len(g) < 25:
+            continue
+        gl = _soe_glyphs(rows, 45, 185, g[0], g[-1], white)
+        if len(gl) == 3:
+            text = _soe_read_line(gl, "l")
+            if text is None:
+                return None
+            labels.append(((g[0] + g[-1]) / 2, text))
+    if [t for _, t in labels] != STANDARD_GROUPS:
+        return None
+    groups = {q: [] for q in STANDARD_GROUPS}
+    dark = lambda x, y: sum(px(x, y)) / 3 < 170  # noqa: E731
+    for x0, y0, x1, y1 in sorted(boxes, key=lambda b: (b[1], b[0])):
+        lines = _soe_bands([y for y in range(y0 + 4, y1 - 3) if any(dark(x, y) for x in range(x0 + 6, x1 - 6))])
+        if len(lines) != 2:
+            return None
+        t1 = _soe_read_line(_soe_glyphs(rows, x0 + 6, x1 - 6, lines[0][0], lines[0][-1], dark), "t")
+        t2 = _soe_read_line(_soe_glyphs(rows, x0 + 6, x1 - 6, lines[1][0], lines[1][-1], dark), "d")
+        m1 = _re.fullmatch(r"(\d\d):(\d\d)-(\d\d):(\d\d)", t1 or "")
+        m2 = _re.fullmatch(r"(\d+)год\.(\d\d)хв\.", t2 or "")
+        if not m1 or not m2:
+            return None
+        a, b = _hm(m1[1], m1[2]), _hm(m1[3], m1[4]) or 1440
+        if b <= a or b - a != int(m2[1]) * 60 + int(m2[2]):
+            return None  # the hours and the printed duration disagree
+        q = min(labels, key=lambda lt: abs(lt[0] - (y0 + y1) / 2))[1]
+        if groups[q] and groups[q][-1][1] > a:
+            return None
+        groups[q].append((a, b, False))
+    return groups
+
+
+def read_soe():
+    """Sumyoblenergo's 'ГПВ' news (www.soe.com.ua/press-service/news): each post carries the day it's for and a
+    picture; the newest post per day wins ('Зміни в застосуванні ГПВ' brings a full new picture)."""
+    page = oe_page("https://www.soe.com.ua/press-service/news")
+    s_ = page.replace('\\"', '"')
+    best = {}
+    for m in _re.finditer(r'\{"id":(\d+),"categories":\[[^\]]*?"name":"ГПВ"[^\]]*\],"title":"([^"]*)"', s_):
+        seg = s_[m.start():m.start() + 20000]
+        seg = seg[:seg.find('"views"')] if '"views"' in seg else seg
+        cm = _re.search(r'"content":\{"content":"(.*?)"\},"createdAt":"([^"]+)"', seg, _re.S)
+        dm = _re.search(r'"date":"(\d{4})-(\d{2})-(\d{2})"', seg)
+        if not cm or not dm:
+            continue
+        content = cm.group(1)
+        if content.startswith("$"):
+            k = page.find(content[1:] + ":T")
+            content = page[k:k + 20000] if k >= 0 else ""
+        img = _re.search(r"https://www\.soe\.com\.ua/uploads/public/news/[0-9a-f]{32}\.png", content)
+        day = (int(dm[1]), int(dm[2]), int(dm[3]))
+        if img and (day not in best or cm.group(2) > best[day][0]):
+            best[day] = (cm.group(2), img.group(0))
+    days = {}
+    keep = {kyiv_today(), kyiv_today(1)}
+    for day, (_, url) in best.items():
+        if day not in keep:
+            continue
+        if url not in _soe_cache:
+            req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+            with urllib.request.urlopen(req, timeout=net_timeout(60)) as r:
+                png = r.read(8_000_000)
+            try:
+                _soe_cache[url] = soe_png(png)
+            except Exception as e:
+                log("Sumy picture unreadable:", url, repr(e))
+                _soe_cache[url] = None
+            if _soe_cache[url] is None:
+                log("Sumy picture not read (unknown glyph or check failed):", url)
+            while len(_soe_cache) > 8:
+                _soe_cache.pop(next(iter(_soe_cache)))
+        if _soe_cache[url]:
+            days[day] = _soe_cache[url]
+    return oe_payload(days)
+
+
 # ---- Volynoblenergo: the schedule is only a picture (two 12x24 grids of half-hour cells), read by cell colour
 def png_rgb(data):
     """8-bit RGB/RGBA non-interlaced PNG -> (width, height, [row bytes as RGB])."""
@@ -1310,7 +1493,7 @@ def read_voe():
 
 
 OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
-              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe,
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe, "soe": read_soe,
               "none": lambda: oe_payload({})}
 
 
@@ -4577,6 +4760,22 @@ def self_test():
     bot.set_user(7300, region="chernivtsi")
     step("chernivtsi: /queue 7 stays 7", lambda: bot.text(7300, "/queue 7"), lambda s: "Черга 7</b>" in s)
 
+    # Sumy: the 11 and 12 November pictures read back exactly; anything unreadable is refused
+    for url, want in (("https://www.soe.com.ua/uploads/public/news/592cc5df159b75ba07f46f1aaadf1de1.png",
+                       {"1.1": [(600, 840), (960, 1200)], "4.1": [(0, 120), (240, 480), (600, 720), (1320, 1440)], "6.2": [(720, 960), (1080, 1320)]}),
+                      ("https://www.soe.com.ua/uploads/public/news/218dd0607861c92e1eb1a9023b6e510d.png",
+                       {"2.1": [(0, 120), (360, 480), (600, 840), (960, 1200), (1320, 1440)], "3.1": [(0, 60), (360, 600), (720, 960), (1080, 1320)]})):
+        try:
+            sg = soe_png(urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/1.0"}), timeout=60).read())
+        except urllib.error.URLError as e:
+            print("     Sumy picture test skipped:", e)
+            continue
+        ok_s = sg is not None and all([(a, b) for a, b, _ in sg[q]] == v for q, v in want.items())
+        step(f"Sumy: picture {url[-12:-4]} read exactly", lambda ok_s=ok_s, sg=sg: tg.out.append(("send", 1, "OK" if ok_s else f"BAD {sg and {q: sg[q] for q in want}}", None)),
+             lambda s: s == "OK")
+    blank = Canvas(1324, 1862, (10, 30, 90)).png()
+    step("Sumy: a picture without the table is refused", lambda: tg.out.append(("send", 1, "OK" if soe_png(blank) is None else "BAD", None)), lambda s: s == "OK")
+
     # Volyn: a known archived picture (17.10.2026, 16:21) read cell by cell; skipped if the archive is gone
     try:
         req = urllib.request.Request(VOE_API + "/media/2026/10/6ad37651be5c4_GPV.png", headers={"User-Agent": "svitlo-kyiv-bot/1.0"})
@@ -4756,7 +4955,7 @@ def self_test():
                        ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
                        ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
                        ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
-                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("ternopil", "Тернопільобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("khmelnytskyi", "Хмельницькобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
+                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("ternopil", "Тернопільобленерго", "1.1"), ("sumy", "Сумиобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("khmelnytskyi", "Хмельницькобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
