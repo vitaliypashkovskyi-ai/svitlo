@@ -124,6 +124,10 @@ REGIONS = {
     "khmelnytskyi": {"uk": "Хмельницька область", "en": "Khmelnytskyi region", "yasno": None, "cities": False, "source": "hoe", "lookup": "hoa",
                      "dtek": "https://hoe.com.ua/post/novini-kompaniji", "co": {"uk": "Хмельницькобленерго", "en": "Khmelnytskoblenergo"},
                      "phones": ["067 010 50 62", "050 010 50 62", "0 800 50 50 62"], "tg": None, "viber": None, "city": None},
+    "ternopil": {"uk": "Тернопільська область", "en": "Ternopil region", "yasno": None, "cities": False, "source": "none", "lookup": "loe",
+                 "noschedule": True,  # the operator shows hours only per address on its own site
+                 "dtek": "https://poweron.toe.com.ua/", "co": {"uk": "Тернопільобленерго", "en": "Ternopiloblenergo"},
+                 "phones": [], "tg": None, "viber": None, "city": None},
     "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe", "lookup": "voe",
               "dtek": "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
               "co": {"uk": "Волиньобленерго", "en": "Volynoblenergo"},
@@ -156,7 +160,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.23"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.24"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -319,6 +323,8 @@ T = {
         "b_img": "🖼 Картинка", "img_caption": "<b>Черга {q}</b> · {label}\nЗелене — світло є, червоне — немає, жовте — можливо.",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
+        "ternopil_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Тернопіль</b>.",
+        "noschedule": "ℹ️ {co} не публікує загальний графік відкрито, тому я знаю вашу чергу, але години відключень дивіться на <a href=\"{url}\">сайті {co}</a>.",
         "hoa_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть вулицю (м. Хмельницький), наприклад <b>Проскурівська</b>, або населений пункт і вулицю через кому: <b>Бабшин, Миру</b>.",
         "zpa_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть вулицю (м. Запоріжжя), наприклад <b>Авраменка</b>, або населений пункт Запорізького району і вулицю через кому: <b>Сонячне, Ясна</b>.",
         "zp_ask_house": "<b>{label}</b>\nНапишіть номер будинку, наприклад <b>16</b> або <b>12а</b>.",
@@ -459,6 +465,8 @@ T = {
         "b_img": "🖼 Picture", "img_caption": "<b>Queue {q}</b> · {label}\nGreen — power on, red — off, yellow — maybe.",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
+        "ternopil_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Тернопіль</b>.",
+        "noschedule": "ℹ️ {co} doesn't publish its schedule openly, so I know your queue, but check the outage hours on <a href=\"{url}\">{co}'s website</a>.",
         "hoa_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the street in Ukrainian (Khmelnytskyi city), e.g. <b>Проскурівська</b>, or a town and street separated by a comma: <b>Бабшин, Миру</b>.",
         "zpa_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the street in Ukrainian (Zaporizhzhia city), e.g. <b>Авраменка</b>, or a Zaporizhzhia district town and street separated by a comma: <b>Сонячне, Ясна</b>.",
         "zp_ask_house": "<b>{label}</b>\nType the house number, e.g. <b>16</b> or <b>12а</b>.",
@@ -1302,7 +1310,8 @@ def read_voe():
 
 
 OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
-              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe}
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe,
+              "none": lambda: oe_payload({})}
 
 
 NOTICE_TTL = 6 * 3600  # a notice holds until a newer schedule post, or this long at most
@@ -1541,6 +1550,9 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
     if region != "kyiv":
         head += f"\n<i>{region_name(region, lang)}</i>"
     lines = [head]
+    if REGIONS[region].get("noschedule"):
+        R = REGIONS[region]
+        return "\n".join(lines + ["", t["noschedule"].format(co=html.escape(R["co"][lang]), url=R["dtek"])])
     note = active_notice(data, now)
     if note:
         g = time.gmtime(note["at"])
@@ -1732,7 +1744,7 @@ def queue_png(region, queue, now=None):
 
 def regions_png(day_mid, title, cur):
     """All regions on one picture: per half-hour, the share of a region's queues without power (green -> red)."""
-    names = [(r, short_region(r)) for r in REGIONS]
+    names = [(r, short_region(r)) for r in REGIONS if not REGIONS[r].get("noschedule")]
     name_w = max(Canvas.text_w(n, 3) for _, n in names) + 30
     cell, row_h, x0 = 13, 34, 30
     W = x0 + name_w + 48 * cell + 30
@@ -2233,7 +2245,7 @@ class Bot:
         if R.get("lookup") in ("mk", "pl", "zt", "cvs"):
             rows.insert(0, [{"text": t["b_by_address"], "callback_data": "MK"}])
             return text, rows
-        return text + (t.get(f"{R.get('lookup')}_hint") or (t["lookup_hint"] if R.get("lookup") else "")), rows
+        return text + (t.get(f"{u['region']}_hint") or t.get(f"{R.get('lookup')}_hint") or (t["lookup_hint"] if R.get("lookup") else "")), rows
 
     # ---------- Dnipro region: town -> (letter) -> street -> house, all by tapping
     def dnipro_buttons(self, u):
@@ -3287,18 +3299,20 @@ class Bot:
         return self.tg.edit(chat_id, message_id, *view) if message_id else self.tg.send(chat_id, *view)
 
     # ---------- Lvivoblenergo directory (power-api.loe.lviv.ua): town -> street -> buildings with their queue
-    def loe_get(self, path, **params):
+    LOE_API = {"lviv": "https://power-api.loe.lviv.ua/api/", "ternopil": "https://api-poweron.toe.com.ua/api/"}
+
+    def loe_get(self, path, region="lviv", **params):
         q = urllib.parse.urlencode({"pagination": "false", **params})
-        return http_json(f"https://power-api.loe.lviv.ua/api/{path}?{q}", timeout=60)
+        return http_json(f"{self.LOE_API[region]}{path}?{q}", timeout=net_timeout(60))
 
     def loe_cities(self, chat_id, u, q):
         t = T[u["lang"]]
         if len(q) < 2:
             return self.tg.send(chat_id, t["no_cities"])
         try:
-            res = [c for c in self.loe_get("pw_cities", name=q[:60]) if isinstance(c, dict) and c.get("id") and c.get("name")]
+            res = [c for c in self.loe_get("pw_cities", u["region"], name=q[:60]) if isinstance(c, dict) and c.get("id") and c.get("name")]
         except Exception:
-            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]]))
+            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS[u["region"]]["co"][u["lang"]]))
         if not res:
             return self.tg.send(chat_id, t["no_cities"])
         label = lambda c: c["name"] + (f" ({c['otg']['name']} громада)" if isinstance(c.get("otg"), dict) and c["otg"].get("name") else "")  # noqa: E731
@@ -3314,10 +3328,10 @@ class Bot:
         if len(q) < 2:
             return self.tg.send(chat_id, t["short"])
         try:
-            res = [x for x in self.loe_get("pw_streets", **{"city.id": st["city"]["id"], "name": q[:60]})
+            res = [x for x in self.loe_get("pw_streets", u["region"], **{"city.id": st["city"]["id"], "name": q[:60]})
                    if isinstance(x, dict) and x.get("id") and x.get("name")]
         except Exception:
-            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]]))
+            return self.tg.send(chat_id, t["loe_busy"].format(co=REGIONS[u["region"]]["co"][u["lang"]]))
         if not res:
             return self.tg.send(chat_id, t["no_streets"])
         res.sort(key=lambda x: (not x["name"].lower().startswith(q.lower()), ua_key(x["name"])))
@@ -3327,14 +3341,19 @@ class Bot:
             return self.loe_pick_street(chat_id, self.user(chat_id), str((exact or res)[0]["id"]))
         self.tg.send(chat_id, t["pick_street"], [[{"text": x["name"][:60], "callback_data": f"s:{x['id']}"}] for x in res[:30]])
 
-    def loe_buildings(self, city_id, street_id):
+    def loe_buildings(self, city_id, street_id, region="lviv"):
         """{building: queue or other value} — the most common chergGpv of the building's consumers. Cached a day."""
-        key = f"loe:bld:{city_id}:{street_id}"
+        key = f"loe:bld:{city_id}:{street_id}" if region == "lviv" else f"loe:bld:{region}:{city_id}:{street_id}"
         row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
         if row and time.time() - row["at"] < 86400:
             return json.loads(row["value"])
         try:
-            rows = self.loe_get("pw_accounts", **{"city.id": city_id, "street.id": street_id})
+            if region == "ternopil":  # one row per building, with its queue
+                rows = [{"buildingName": b.get("buildingName"), "chergGpv": b.get("chergGpv")}
+                        for b in (self.loe_get("pw-accounts/building-names", region, cityId=city_id, streetId=street_id) or {}).get("buildingNames") or []
+                        if isinstance(b, dict)]
+            else:
+                rows = self.loe_get("pw_accounts", region, **{"city.id": city_id, "street.id": street_id})
         except Exception:
             if row:
                 return json.loads(row["value"])
@@ -3365,9 +3384,9 @@ class Bot:
             res = self.tg.send(chat_id, wait)
             message_id = (res or {}).get("result", {}).get("message_id") if isinstance(res, dict) else None
         try:
-            blds = self.loe_buildings(st["city"]["id"], sid)
+            blds = self.loe_buildings(st["city"]["id"], sid, u["region"])
         except Exception:
-            text = t["loe_busy"].format(co=REGIONS["lviv"]["co"][u["lang"]])
+            text = t["loe_busy"].format(co=REGIONS[u["region"]]["co"][u["lang"]])
             return self.tg.edit(chat_id, message_id, text) if message_id else self.tg.send(chat_id, text)
 
         def natural(b):
@@ -4041,7 +4060,7 @@ class Bot:
     def feed_summary_text(self, cur, title, date):
         short = lambda r: region_name(r, "uk").replace(" область", "")  # noqa: E731
         lines = [f"<b>{short(r)}</b> — {self.feed_span(cur[r])}" for r in REGIONS if r in cur]
-        waiting = [short(r) for r in REGIONS if r not in cur]
+        waiting = [short(r) for r in REGIONS if r not in cur and not REGIONS[r].get("noschedule")]
         text = f"{title}, {date}</b>\n\n" + "\n".join(lines)
         if waiting:
             more = f" та ще {len(waiting) - 5}" if len(waiting) > 5 else ""
@@ -4737,7 +4756,7 @@ def self_test():
                        ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
                        ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
                        ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
-                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("khmelnytskyi", "Хмельницькобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
+                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("ternopil", "Тернопільобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("khmelnytskyi", "Хмельницькобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
@@ -4776,6 +4795,18 @@ def self_test():
             h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
             if h1:
                 step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
+
+    # Ternopil: queue by address from the operator's directory; no open schedule
+    TE = 7987
+    bot.user(TE, "uk")
+    bot.set_user(TE, region="ternopil")
+    step("Ternopil: 'Тернопіль' -> town", lambda: bot.text(TE, "Тернопіль"), lambda s: "Тернопіль" in s)
+    step("Ternopil: 'Руська' -> houses", lambda: bot.text(TE, "Руська"), lambda s: "Руська" in s)
+    step("Ternopil: house 1 -> queue 3.2, hours on the operator's site", lambda: bot.text(TE, "1"),
+         lambda s: "Черга 3.2" in s)
+    tst = status_text("3.2", "uk", None, None, "ternopil")
+    step("Ternopil: status explains the hours aren't open", lambda: tg.out.append(("send", 1, "OK" if "не публікує загальний графік" in tst else "BAD " + tst[:200], None)),
+         lambda s: s == "OK")
 
     # Khmelnytskyi: the same flow from the operator's workbooks
     KH = 7985
