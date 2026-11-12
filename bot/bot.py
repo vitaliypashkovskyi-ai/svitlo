@@ -121,6 +121,9 @@ REGIONS = {
     "zhytomyr": {"uk": "Житомирська область", "en": "Zhytomyr region", "yasno": None, "cities": False, "source": "zt", "lookup": "zt",
                  "dtek": "https://www.ztoe.com.ua/unhooking-search.php", "co": {"uk": "Житомиробленерго", "en": "Zhytomyroblenergo"},
                  "phones": ["0 800 30 92 82", "(0412) 55-92-82"], "tg": None, "viber": None, "city": None},
+    "khmelnytskyi": {"uk": "Хмельницька область", "en": "Khmelnytskyi region", "yasno": None, "cities": False, "source": "hoe",
+                     "dtek": "https://hoe.com.ua/post/novini-kompaniji", "co": {"uk": "Хмельницькобленерго", "en": "Khmelnytskoblenergo"},
+                     "phones": ["067 010 50 62", "050 010 50 62", "0 800 50 50 62"], "tg": None, "viber": None, "city": None},
     "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe", "lookup": "voe",
               "dtek": "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
               "co": {"uk": "Волиньобленерго", "en": "Volynoblenergo"},
@@ -152,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.6"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.7"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1001,6 +1004,30 @@ def read_zt():
     return oe_payload(days)
 
 
+def read_hoe():
+    """Khmelnytskoblenergo: news posts 'Погодинні відключення на 11 листопада' / 'Прогноз обмежень на 12 листопада'
+    (newest first) whose text says '12 листопада на Хмельниччині будуть застосовані графіки погодинних відключень'
+    and lists 'Підчерга 1.1 – 06:00-09:00; 16:00-19:00.' Corrections go on top of the same post: the first line per
+    subqueue wins."""
+    news = oe_page("https://hoe.com.ua/post/novini-kompaniji")
+    links = [u for u in dict.fromkeys(_re.findall(r"/post/(?:prognoz|pogodinni)[a-z0-9-]*-na-\d{1,2}-[a-z]+(?:-\d+)?\.html", news))][:4]
+    days = {}
+    for link in links:
+        page = oe_page("https://hoe.com.ua" + link)
+        i = page.find('<div class="post">')
+        text = html_text(page[i:page.find("page__arrows", i)] if i >= 0 else "")
+        dm = _re.search(r"(\d{1,2})\s+([а-яіїє]+)\s+на\s+Хмельниччині\s+(?:будуть\s+)?застосов", text, _re.I)
+        day = ua_day(dm[1], dm[2]) if dm else None
+        if not day or day in days:
+            continue
+        groups = {}
+        for g1, g2, rest in _re.findall(r"[Пп]ідчерга\s*([1-6])\.([12])\s*[–—-]\s*([^\n]*)", text):
+            groups.setdefault(f"{g1}.{g2}", read_intervals(rest))
+        if groups:
+            days[day] = {g: groups.get(g, []) for g in STANDARD_GROUPS}
+    return oe_payload(dict(sorted(days.items())[-3:]))
+
+
 # ---- Volynoblenergo: the schedule is only a picture (two 12x24 grids of half-hour cells), read by cell colour
 def png_rgb(data):
     """8-bit RGB/RGBA non-interlaced PNG -> (width, height, [row bytes as RGB])."""
@@ -1164,7 +1191,7 @@ def read_voe():
 
 
 OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl": read_pl,
-              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt}
+              "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe}
 
 
 def region_groups(region, data=None):
@@ -3453,7 +3480,7 @@ def self_test():
                        ("ivano-frankivsk", "Прикарпаттяобленерго", "1.1"), ("cherkasy", "Черкасиобленерго", "1.1"),
                        ("poltava", "Полтаваобленерго", "1.1"), ("zaporizhzhia", "Запоріжжяобленерго", "1.1"),
                        ("rivne", "Рівнеобленерго", "1.1"), ("kharkiv", "Харківобленерго", "1.1"),
-                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
+                       ("kirovohrad", "Кіровоградобленерго", "1.1"), ("volyn", "Волиньобленерго", "1.1"), ("zhytomyr", "Житомиробленерго", "1.1"), ("khmelnytskyi", "Хмельницькобленерго", "1.1"), ("chernivtsi", "Чернівціобленерго", "1")):
         W = 7000 + len(rg)
         bot.user(W, "uk")
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
