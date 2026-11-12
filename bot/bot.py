@@ -121,7 +121,7 @@ REGIONS = {
     "zhytomyr": {"uk": "Житомирська область", "en": "Zhytomyr region", "yasno": None, "cities": False, "source": "zt", "lookup": "zt",
                  "dtek": "https://www.ztoe.com.ua/unhooking-search.php", "co": {"uk": "Житомиробленерго", "en": "Zhytomyroblenergo"},
                  "phones": ["0 800 30 92 82", "(0412) 55-92-82"], "tg": None, "viber": None, "city": None},
-    "khmelnytskyi": {"uk": "Хмельницька область", "en": "Khmelnytskyi region", "yasno": None, "cities": False, "source": "hoe",
+    "khmelnytskyi": {"uk": "Хмельницька область", "en": "Khmelnytskyi region", "yasno": None, "cities": False, "source": "hoe", "lookup": "hoa",
                      "dtek": "https://hoe.com.ua/post/novini-kompaniji", "co": {"uk": "Хмельницькобленерго", "en": "Khmelnytskoblenergo"},
                      "phones": ["067 010 50 62", "050 010 50 62", "0 800 50 50 62"], "tg": None, "viber": None, "city": None},
     "volyn": {"uk": "Волинська область", "en": "Volyn region", "yasno": None, "cities": False, "source": "voe", "lookup": "voe",
@@ -156,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.22"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.23"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -319,6 +319,7 @@ T = {
         "b_img": "🖼 Картинка", "img_caption": "<b>Черга {q}</b> · {label}\nЗелене — світло є, червоне — немає, жовте — можливо.",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
+        "hoa_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть вулицю (м. Хмельницький), наприклад <b>Проскурівська</b>, або населений пункт і вулицю через кому: <b>Бабшин, Миру</b>.",
         "zpa_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть вулицю (м. Запоріжжя), наприклад <b>Авраменка</b>, або населений пункт Запорізького району і вулицю через кому: <b>Сонячне, Ясна</b>.",
         "zp_ask_house": "<b>{label}</b>\nНапишіть номер будинку, наприклад <b>16</b> або <b>12а</b>.",
         "zp_many": "За списками {co} будинок <b>{h}</b> на «{street}» має кілька записів (різні під'їзди чи лінії):\n{lines}\nВиберіть свою чергу:",
@@ -458,6 +459,7 @@ T = {
         "b_img": "🖼 Picture", "img_caption": "<b>Queue {q}</b> · {label}\nGreen — power on, red — off, yellow — maybe.",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
+        "hoa_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the street in Ukrainian (Khmelnytskyi city), e.g. <b>Проскурівська</b>, or a town and street separated by a comma: <b>Бабшин, Миру</b>.",
         "zpa_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the street in Ukrainian (Zaporizhzhia city), e.g. <b>Авраменка</b>, or a Zaporizhzhia district town and street separated by a comma: <b>Сонячне, Ясна</b>.",
         "zp_ask_house": "<b>{label}</b>\nType the house number, e.g. <b>16</b> or <b>12а</b>.",
         "zp_many": "{co}'s lists have several entries for house <b>{h}</b> on «{street}» (different entrances or lines):\n{lines}\nPick your queue:",
@@ -904,6 +906,34 @@ def yasno_payload(obj):
 def read_yasno(region_id, dso_id):
     return yasno_payload(http_json(f"https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/{region_id}"
                                    f"/dsos/{dso_id}/planned-outages", timeout=30))
+
+
+def xlsx_rows(data):
+    """First sheet of an .xlsx as [{'A': text, 'B': text, …}], stdlib only."""
+    import io
+    import zipfile
+    import xml.etree.ElementTree as ET
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    z = zipfile.ZipFile(io.BytesIO(data))
+    shared = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(ns + "si"):
+            shared.append("".join(x.text or "" for x in si.iter(ns + "t")))
+    sheet = sorted(n for n in z.namelist() if _re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n))[0]
+    out = []
+    for r in ET.fromstring(z.read(sheet)).iter(ns + "row"):
+        vals = {}
+        for c in r.iter(ns + "c"):
+            col = _re.match(r"[A-Z]+", c.get("r", "")).group(0) if c.get("r") else ""
+            v = c.find(ns + "v")
+            if c.get("t") == "s" and v is not None:
+                vals[col] = shared[int(v.text)]
+            elif c.get("t") == "inlineStr":
+                vals[col] = "".join(x.text or "" for x in c.iter(ns + "t"))
+            else:
+                vals[col] = v.text if v is not None and v.text else ""
+        out.append(vals)
+    return out
 
 
 def oe_page(url, data=None):
@@ -2715,7 +2745,7 @@ class Bot:
             return self.tg.send(chat_id, *self.mk_level_view(u, query=m))
         if R.get("lookup") == "voe":
             return self.voe_text(chat_id, u, m)
-        if R.get("lookup") == "zpa":
+        if R.get("lookup") in ("zpa", "hoa"):
             return self.zp_text(chat_id, u, m)
         if R.get("lookup") == "loe":
             if st.get("street"):
@@ -3050,7 +3080,7 @@ class Bot:
         tok = token.lower().replace("–", "-").replace("—", "-").strip()
         h = house.lower().replace(" ", "").replace("–", "-")
         base = _re.split(r"\s*\(|\s+п\.", tok)[0].replace(" ", "")
-        if base == h:
+        if base == h or _re.sub(r"^(\d+)-([а-яієїґ])$", r"\1\2", base) == h:
             return True
         m = _re.fullmatch(r"(\d+)[а-яієїґ]?\s*-\s*(\d+)\s*(парні|непарні)?", tok)
         if m and h.isdigit():
@@ -3061,6 +3091,47 @@ class Bot:
                 return n % 2 == a % 2 if a % 2 == b % 2 else True
         return False
 
+    def addr_lists(self, u):
+        """(index, the main city) for regions whose oblenergo publishes address lists."""
+        if REGIONS[u["region"]].get("lookup") == "hoa":
+            return self.hoe_index(), "Хмельницький"
+        return self.zp_index(), "м. Запоріжжя"
+
+    def hoe_index(self):
+        """Khmelnytskoblenergo's workbooks per district office (hoe.com.ua/page/pogodinni-vidkljuchennja):
+        town | street | '1, 10, 4/1' | '1.1. підчерга'. Households only (the 'непобут' book is skipped). Cached a week."""
+        key = "hoe:index"
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < 7 * 86400:
+            return json.loads(row["value"])
+        idx, books = {}, 0
+        try:
+            page = oe_page("https://hoe.com.ua/page/pogodinni-vidkljuchennja")
+            for link in dict.fromkeys(_re.findall(r'(/Content/Uploads/GPV6/xls/[^"]+\.xlsx)', page)):
+                if "непобут" in link:
+                    continue
+                req = urllib.request.Request("https://hoe.com.ua" + urllib.parse.quote(link),
+                                             headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+                with urllib.request.urlopen(req, timeout=net_timeout(120)) as r:
+                    data = r.read(20_000_000)
+                books += 1
+                for cells in xlsx_rows(data):
+                    town, street, houses, q = (cells.get(c, "").strip() for c in "ABCD")
+                    qm = _re.match(r"([1-6])\.([12])", q)
+                    if town and street and qm:
+                        for tok in houses.split(","):
+                            if tok.strip():
+                                idx.setdefault(f"{town}|{street}", []).append((tok.strip(), f"{qm[1]}.{qm[2]}"))
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+        if idx and books >= 3:
+            self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(idx, ensure_ascii=False), int(time.time())))
+        elif row:
+            return json.loads(row["value"])
+        return idx
+
     def zp_text(self, chat_id, u, m):
         t = T[u["lang"]]
         co = REGIONS[u["region"]]["co"][u["lang"]]
@@ -3069,7 +3140,7 @@ class Bot:
         if st.get("zp_street") and "," not in m and any(ch.isdigit() for ch in m) and len(m) <= 12:
             return self.zp_house(chat_id, u, m)
         try:
-            idx = self.zp_index()
+            idx, city = self.addr_lists(u)
         except Exception:
             return self.tg.send(chat_id, t["loe_busy"].format(co=co))
         town, _, street = m.rpartition(",")
@@ -3080,14 +3151,14 @@ class Bot:
             return self.tg.send(chat_id, t["short"])
         hits = [k for k in idx if street in k.split("|", 1)[1].lower()
                 and (not town or town.replace("м. ", "").replace("с. ", "") in k.split("|", 1)[0].lower())]
-        hits.sort(key=lambda k: (not k.startswith("м. Запоріжжя|"), not k.split("|", 1)[1].lower().split(" ", 1)[-1].startswith(street), ua_key(k)))
+        hits.sort(key=lambda k: (not k.startswith(city + "|"), not k.split("|", 1)[1].lower().split(" ", 1)[-1].startswith(street), ua_key(k)))
         if not hits:
             return self.tg.send(chat_id, t["zp_none"].format(co=co, q=html.escape(m)))
         hits = hits[:30]
         self.set_state(chat_id, {"zp_hits": hits})
         exact = [i for i, k in enumerate(hits) if k.split("|", 1)[1].lower().split(" ", 1)[-1] == street]
-        if not town and len([i for i in exact if hits[i].startswith("м. Запоріжжя|")]) == 1:
-            exact = [i for i in exact if hits[i].startswith("м. Запоріжжя|")]  # no town given: the city
+        if not town and len([i for i in exact if hits[i].startswith(city + "|")]) == 1:
+            exact = [i for i in exact if hits[i].startswith(city + "|")]  # no town given: the city
         if len(hits) == 1 or len(exact) == 1:
             return self.zp_pick(chat_id, self.user(chat_id), str(exact[0] if len(exact) == 1 else 0))
         return self.tg.send(chat_id, t["pick_street"], [[{"text": f"{k.split('|')[1]} — {k.split('|')[0]}"[:60], "callback_data": f"s:{i}"}]
@@ -3108,7 +3179,7 @@ class Bot:
         co = REGIONS[u["region"]]["co"][u["lang"]]
         key = self.state(u)["zp_street"]
         town, street = key.split("|", 1)
-        found = [(tok, q) for tok, q in self.zp_index().get(key, []) if self.zp_match(tok, house)]
+        found = [(tok, q) for tok, q in self.addr_lists(u)[0].get(key, []) if self.zp_match(tok, house)]
         queues = sorted({q for _, q in found})
         if not queues:
             return self.tg.send(chat_id, t["zp_no_house"].format(h=html.escape(house), street=html.escape(street), co=co), self.queue_pick_view(u)[1])
@@ -3380,7 +3451,7 @@ class Bot:
             return self.loe_pick_street(chat_id, u, sid, message_id)
         if REGIONS[u["region"]].get("lookup") == "voe":
             return self.voe_pick(chat_id, u, sid, message_id)
-        if REGIONS[u["region"]].get("lookup") == "zpa":
+        if REGIONS[u["region"]].get("lookup") in ("zpa", "hoa"):
             return self.zp_pick(chat_id, u, sid, message_id)
         t = T[u["lang"]]
         st = self.state(u)
@@ -4705,6 +4776,21 @@ def self_test():
             h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
             if h1:
                 step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
+
+    # Khmelnytskyi: the same flow from the operator's workbooks
+    KH = 7985
+    bot.user(KH, "uk")
+    bot.set_user(KH, region="khmelnytskyi")
+    m65 = bot.zp_match("65-А", "65а")
+    step("Khmelnytskyi: '65-А' is house 65а", lambda: tg.out.append(("send", 1, "OK" if m65 else "BAD", None)), lambda s: s == "OK")
+    try:
+        hidx = bot.hoe_index()
+    except Exception as e:
+        hidx = {}
+        print("     Khmelnytskyi lists unavailable:", e)
+    if hidx:
+        step("Khmelnytskyi: 'Бабшин, Миру' -> asks the house", lambda: bot.text(KH, "Бабшин, Миру"), lambda s: "Миру" in s)
+        step("Khmelnytskyi: house 10 -> queue 1.1", lambda: bot.text(KH, "10"), lambda s: "Черга 1.1" in s and "Миру, 10" in s)
 
     # Zaporizhzhia: street -> house number from the operator's per-queue sheets
     ZA = 7980
