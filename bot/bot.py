@@ -163,7 +163,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.26"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.27"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -3497,7 +3497,8 @@ class Bot:
 
     def loe_get(self, path, region="lviv", **params):
         q = urllib.parse.urlencode({"pagination": "false", **params})
-        return http_json(f"{self.LOE_API[region]}{path}?{q}", timeout=net_timeout(60))
+        res = http_json(f"{self.LOE_API[region]}{path}?{q}", timeout=net_timeout(60))
+        return res["hydra:member"] if isinstance(res, dict) and isinstance(res.get("hydra:member"), list) else res
 
     def loe_cities(self, chat_id, u, q):
         t = T[u["lang"]]
@@ -4233,7 +4234,14 @@ class Bot:
         head = f"⚡ <b>{name}</b> — графік {rel}, {date}"
         if all("-" not in sl for sl in groups.values()):
             return head + "\n\nВідключень не заплановано."
-        if len(groups) > 12:  # Kyiv: 60 groups — too long for the channel
+        if len(groups) > 12:  # Kyiv: 60 groups — groups with the same hours share a line
+            by = {}
+            for g in self.feed_order(groups):
+                by.setdefault(groups[g], []).append(g)
+            if len(by) <= 16:
+                names = lambda gs: ", ".join(g[:-2] if g.endswith(".1") and all(x.endswith(".1") for x in groups) else g for g in gs)  # noqa: E731
+                lines = [f"<b>Групи {names(gs)}</b>\n{self.feed_runs(sl).replace(', ', ' | ') or 'без відключень'}" for sl, gs in by.items()]
+                return head + "\n\n" + "\n\n".join(lines) + "\n\n<i>Свою групу — у боті.</i>"
             return head + f"\n\n{self.feed_span(groups).capitalize()} залежно від групи ({len(groups)} груп).\n<i>Свою групу — у боті.</i>"
         by = {}
         for g in self.feed_order(groups):
@@ -4246,6 +4254,13 @@ class Bot:
         head = f"🔄 <b>{name}</b> — зміни в графіку {rel}, {date}"
         changed = [g for g in self.feed_order(new) if old.get(g) != new[g]]
         if len(new) > 12 or len(changed) > 12:
+            by = {}
+            for g in changed:
+                by.setdefault(new[g], []).append(g)
+            if len(by) <= 16:
+                names = lambda gs: ", ".join(g[:-2] if g.endswith(".1") and all(x.endswith(".1") for x in new) else g for g in gs)  # noqa: E731
+                return head + "\n\n" + "\n\n".join(f"<b>Групи {names(gs)}</b> — тепер\n{self.feed_runs(sl).replace(', ', ' | ') or 'без відключень'}"
+                                                     for sl, gs in by.items()) + "\n\n<i>Свою групу — у боті.</i>"
             return head + f"\n\nТепер: {self.feed_span(new)}.\n<i>Свою групу — у боті.</i>"
         lines = [f"<code>{g}</code> · було {self.feed_runs(old.get(g, '')) or 'без відключень'} → тепер <b>{self.feed_runs(new[g]) or 'без відключень'}</b>"
                  for g in changed]
@@ -5008,6 +5023,13 @@ def self_test():
             h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
             if h1:
                 step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
+
+    # Kyiv-style region posts: 60 groups, groups with the same hours on one line
+    pats = ["-" * 4 + "+" * 44, "+" * 10 + "-" * 6 + "+" * 32]
+    k60 = {f"{i}.1": pats[i % 2] for i in range(1, 61)}
+    kt = bot.feed_region_text("kyiv", k60, "на завтра", "13 листопада")
+    step("Kyiv post: 60 groups grouped by hours", lambda: tg.out.append(("send", 1, "OK" if "<b>Групи 1, 3, 5" in kt and "00:00–02:00" in kt and "05:00–08:00" in kt and kt.count("<b>Групи") == 2 else "BAD " + kt[:200], None)),
+         lambda s: s == "OK")
 
     # Ternopil: queue by address from the operator's directory; no open schedule
     TE = 7987
