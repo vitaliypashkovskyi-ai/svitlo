@@ -156,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.21"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.22"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -655,6 +655,12 @@ def schedule(region="kyiv", force=False):
                 log("schedule fetch failed:", region, e)
                 sc["err"], sc["err_at"] = (repr(e)[:200], time.time())
                 sc["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
+            if ok and not src and region in DTEK_AREAS and isinstance(sc["data"], dict):
+                try:
+                    n = notice_dtek(region)
+                    sc["data"]["notices"] = [n] if n else []
+                except Exception as e:
+                    log("DTEK notice read failed:", region, e)
             # backup: YASNO's own planned outages when outage-data-ua is down or has nothing for today
             if not src and REGIONS[region].get("yasno") and not (ok and sc["data"] and days_from_today(sc["data"], time.time())):
                 try:
@@ -1360,6 +1366,48 @@ def notice_zt():
     return None
 
 
+DTEK_AREAS = {  # how the DTEK group channel names each region
+    "kyiv": _re.compile(r"(?<![а-яіїє])Київ(?:\b|[,:.!]|\s+(?:та|і|й))(?!ськ|щин)|\bу\s+Києві|\bстолиц", _re.I),
+    "kyiv-region": _re.compile(r"Київськ\w*\s+област|Київщин|(?:Вишгородськ|Бучанськ|Броварськ|Бориспільськ|Обухівськ|Фастівськ|Білоцерківськ)\w*\s+район", _re.I),
+    "dnipro": _re.compile(r"Дніпр|Павлоград|Кам[ʼ'’]янськ|Кривий\s+Ріг|Нікопол", _re.I),
+    "odesa": _re.compile(r"Одес", _re.I),
+}
+DTEK_EMERG = _re.compile(r"екстрені\s+відключення|аварійн\w*\s+відключ", _re.I)
+DTEK_BACK = _re.compile(r"діють\s+графік|графік\w*\s+(?:відключень\s+)?(?:знову\s+)?діють|стабілізува", _re.I)
+_dtek_posts = {"at": 0, "items": []}
+
+
+def notice_dtek(region, now=None):
+    """The DTEK group's official channel (t.me/dtek_ua): '‼️Київ, Вишгородський і Бучанський райони Київщини: тривають
+    екстрені відключення … графіки не діють'. The newest post naming the region decides: emergency -> a notice,
+    'діють графіки' / 'стабілізувати' -> none. Attack and repair news are skipped."""
+    now = now or time.time()
+    if now - _dtek_posts["at"] > 300:
+        page = oe_page("https://t.me/s/dtek_ua")
+        items = []
+        for m in _re.finditer(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>.*?<time[^>]*datetime="([^"]+)"', page, _re.S):
+            try:
+                items.append((datetime.fromisoformat(m.group(2)).timestamp(), html_text(m.group(1))))
+            except ValueError:
+                continue
+        _dtek_posts.update(at=now, items=sorted(items, reverse=True))
+    return pick_dtek(_dtek_posts["items"], region, now)
+
+
+def pick_dtek(items, region, now):
+    area = DTEK_AREAS[region]
+    for ts, text in items:
+        if now - ts > NOTICE_TTL:
+            break
+        if not area.search(text):
+            continue
+        if DTEK_EMERG.search(text):
+            return {"kind": "emergency", "at": int(ts), "text": " ".join(text.split())[:300], "url": "https://t.me/dtek_ua"}
+        if DTEK_BACK.search(text):
+            return None
+    return None
+
+
 NOTICE_READERS = {"ck": notice_ck, "kh": notice_kh, "kr": notice_kr, "zp": notice_zp, "zt": notice_zt}
 
 
@@ -1467,7 +1515,7 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
     if note:
         g = time.gmtime(note["at"])
         off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
-        lines += [t["notice_" + note["kind"]].format(co=html.escape((REGIONS[region].get("co") or {}).get(lang, "")),
+        lines += [t["notice_" + note["kind"]].format(co=html.escape((REGIONS[region].get("co") or {}).get(lang) or "ДТЕК"),
                                                     t=time.strftime("%H:%M", time.gmtime(note["at"] + off)), url=note["url"]), ""]
     today = days[0] if days and days[0][0] <= now else None
     if today:
@@ -3848,7 +3896,7 @@ class Bot:
                 what = ("діють графіки аварійних відключень (ГАВ)" if note["kind"] == "emergency"
                         else "графіки погодинних відключень скасовано")
                 self.channel_post(f"⚠️ <b>{region_name(region, 'uk')}: {what}.</b>\nРозклад погодинних відключень зараз може не виконуватися.\n\n"
-                                  f"<i>{html.escape(REGIONS[region]['co']['uk'])}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>",
+                                  f"<i>{html.escape((REGIONS[region].get('co') or {}).get('uk') or 'ДТЕК')}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>",
                                   [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]])
         self.channel_feed(today, now, is_today=True)
         if mins >= 12 * 60:  # tomorrow's schedules from noon on
@@ -4561,8 +4609,18 @@ def self_test():
     step("bulk: soonest outage first", lambda: tg.out.append(("send", 1, "OK" if order == ["notice", "soon", "late", "none"] else f"BAD {order}", None)),
          lambda s: s == "OK")
 
-    # notices: emergency outages and cancelled schedules
+    # DTEK notices: the group channel names the regions in one post
     nw = time.time()
+    posts = [(nw - 100, "‼️Київ, Вишгородський і Бучанський райони Київщини: за командою Укренерго тривають екстрені відключення"),
+             (nw - 900, "Дніпропетровщина: енергетикам вдалося стабілізувати ситуацію. За командою Укренерго діють графікі відключень."),
+             (nw - 1800, "‼️Київ, Київська область та місто Дніпро: тривають екстрені відключення"),
+             (nw - 2000, "Одещина: ворог знову атакує енергетику. Без світла залишаються понад 135 тисяч родин")]
+    got = {r: (pick_dtek(posts, r, nw) or {}).get("kind") for r in DTEK_AREAS}
+    step("DTEK notices: Kyiv + Kyiv region on, Dnipro back to schedules, Odesa attack news ignored",
+         lambda: tg.out.append(("send", 1, "OK" if got == {"kyiv": "emergency", "kyiv-region": "emergency", "dnipro": None, "odesa": None} else f"BAD {got}", None)),
+         lambda s: s == "OK")
+
+    # notices: emergency outages and cancelled schedules
     n1 = pick_notice([(nw - 600, "По Черкаській області застосовані графіки аварійних відключень (ГАВ)"),
                       (nw - 9000, "Оновлено графік погодинних відключень (ГПВ) на 7 листопада")], "u", nw)
     n2 = pick_notice([(nw - 600, "Оновлено графік погодинних відключень (ГПВ) на 7 листопада"),
