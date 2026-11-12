@@ -156,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.19"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.20"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -309,6 +309,7 @@ T = {
         "b_rep_off": "⚡ У мене немає світла", "b_rep_on": "💡 Світло є",
         "b_share": "📤 Поділитися",
         "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
+        "share_street": "Сусіди! Графік відключень світла для «{street}»: відкрийте бота, виберіть свій будинок — і отримуйте нагадування перед відключенням.",
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
         "g_welcome": "👋 <b>Привіт!</b> Я надсилатиму в цей чат графік відключень світла для вашого будинку: графік на завтра, попередження за 30 хв до відключення і коли світло має повернутися. Вночі (23:00–07:00) мовчу.\n\n<b>Адмін чату, вкажіть адресу будинку:</b>\n<code>/address Шевченка</code> — назва вулиці, далі виберіть вулицю й будинок кнопками.\nЯкщо будинок не в Києві — спершу /region.\nЯкщо я попрошу щось написати — відповідайте (Reply) на моє повідомлення.\n\n/now — графік зараз · /pic — картинка",
         "g_admin_only": "Налаштовувати бота в цьому чаті може лише адмін чату.",
@@ -447,6 +448,7 @@ T = {
         "b_rep_off": "⚡ No power here", "b_rep_on": "💡 Power is on",
         "b_share": "📤 Share",
         "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
+        "share_street": "Neighbours! The power outage schedule for «{street}»: open the bot, pick your house and get reminders before outages.",
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
         "g_welcome": "👋 <b>Hi!</b> I'll post this building's power outage schedule here: tomorrow's schedule, a warning 30 min before an outage and when the power should be back. I stay quiet at night (23:00–07:00).\n\n<b>Chat admin, set the building's address:</b>\n<code>/address Шевченка</code> — the street name, then pick the street and house with the buttons.\nIf it's not in Kyiv, use /region first.\nIf I ask you to type something, reply to my message.\n\n/now — schedule now · /pic — picture",
         "g_admin_only": "Only this chat's admins can set up the bot here.",
@@ -1849,9 +1851,27 @@ class Bot:
             raise
 
     # ---------- views
+    @staticmethod
+    def street_param(a):
+        """A /start parameter that opens the bot on this address's street (Kyiv, Dnipro region), or None."""
+        parts = [x.strip() for x in str(a["label"]).split(",")]
+        if a["region"] == "kyiv" and STREET_BY_ID and len(parts) >= 2:
+            sid = next((k for k, v in STREET_BY_ID.items() if v == parts[0]), None)
+            return (f"st_{sid}", parts[0]) if sid else None
+        if a["region"] == "dnipro" and DNIPRO and len(parts) >= 3:
+            for tid, (tname, _, by_id) in DNIPRO.items():
+                if tname == parts[0]:
+                    sid = next((k for k, v in by_id.items() if v == parts[1]), None)
+                    return (f"ds_{tid}_{sid}", parts[1]) if sid else None
+        return None
+
     def share_url(self, u, a):
-        """Telegram's share sheet with a ready message and a link that opens the bot on this queue."""
+        """Telegram's share sheet: neighbours get a link to this street (they pick their house), else to the queue."""
         t = T[u["lang"]]
+        sp = self.street_param(a)
+        if sp:
+            return "https://t.me/share/url?" + urllib.parse.urlencode(
+                {"url": f"https://t.me/{BOT_USERNAME}?start={sp[0]}", "text": t["share_street"].format(street=sp[1])})
         text = t["share_text"].format(q=a["queue"], r=region_name(a["region"], u["lang"]))
         return "https://t.me/share/url?" + urllib.parse.urlencode({"url": deep_link(a["region"], a["queue"]), "text": text})
 
@@ -2403,6 +2423,13 @@ class Bot:
         cmd, _, arg = m.partition(" ")
         cmd = cmd.split("@")[0].lower()
         arg = arg.strip()
+        sm = _re.fullmatch(r"st_(\d{1,9})|ds_(\d{1,9})_(\d{1,9})", arg) if cmd == "/start" else None
+        if sm and sm[1] and sm[1] in STREET_BY_ID:  # a neighbour's link: open on their street, they pick the house
+            self.set_user(chat_id, region="kyiv")
+            self.set_state(chat_id, {"streets": {sm[1]: STREET_BY_ID[sm[1]]}})
+            return self.pick_street(chat_id, self.user(chat_id), sm[1])
+        if sm and sm[2]:
+            return self.pick_dnipro_street(chat_id, u, sm[2], sm[3])
         if cmd == "/start" and parse_start(arg):
             region, q = parse_start(arg)
             data = schedule(region)
@@ -4428,6 +4455,14 @@ def self_test():
     print("     pictures:", os.path.join(tmp, "q.png"), len(qp), os.path.join(tmp, "r.png"), len(rp))
     step("pictures: queue and regions render", lambda: tg.out.append(("send", 1, "OK" if qp[:4] == b"\x89PNG" and rp[:4] == b"\x89PNG" else "BAD", None)),
          lambda s: s == "OK")
+
+    # 'invite neighbours': sharing an address with a street opens the bot on that street
+    sp = bot.street_param({"label": "вул. Перемишльська, 2", "region": "kyiv"})
+    su = bot.share_url(bot.user(C), {"label": "вул. Перемишльська, 2", "region": "kyiv", "queue": "4.1"}) if sp else ""
+    step("invite: share link points to the street", lambda: tg.out.append(("send", 1, "OK" if sp and "start%3Dst_" in su and "Сусіди" in urllib.parse.unquote_plus(su) else f"BAD {sp}", None)),
+         lambda s: s == "OK")
+    if sp:
+        step("invite: a neighbour opens it -> the street's houses", lambda: bot.text(8101, f"/start {sp[0]}", "uk"), lambda s: "Перемишльська" in s)
 
     # group chats
     G, ADM, MEM = -100777, 501, 502
