@@ -156,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.20"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.21"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -578,7 +578,17 @@ class DB:
                     self.con.execute(f"ALTER TABLE {table} ADD COLUMN region TEXT DEFAULT 'kyiv'")
             if "joined" not in [r[1] for r in self.con.execute("PRAGMA table_info(users)")]:
                 self.con.execute("ALTER TABLE users ADD COLUMN joined INTEGER")  # v4: when the user first wrote (for /stats)
+            if "source" not in [r[1] for r in self.con.execute("PRAGMA table_info(users)")]:
+                self.con.execute("ALTER TABLE users ADD COLUMN source TEXT")  # v5: channel / share / group / direct (for /stats)
             self.con.commit()
+
+    def backup(self, path):
+        with self.lock:
+            dst = sqlite3.connect(path)
+            try:
+                self.con.backup(dst)
+            finally:
+                dst.close()
 
     def q(self, sql, args=()):
         with self.lock:
@@ -1952,6 +1962,21 @@ class Bot:
             parts.append(text)
         return "\n\n".join(parts) if parts else t["week_none"]
 
+    def backup_tick(self, now, folder=None):
+        """04:00 every day: data/backup/bot-YYYY-MM-DD.db, the last 14 kept."""
+        today = kyiv_midnight(*kyiv_today())
+        if not (4 * 60 <= (now - today) / 60 < 4 * 60 + 30) or not self.mark(0, f"backup:{today}"):
+            return None
+        folder = folder or os.path.join(DATA_DIR, "backup")
+        os.makedirs(folder, exist_ok=True)
+        y, m, d = kyiv_today()
+        path = os.path.join(folder, f"bot-{y}-{m:02d}-{d:02d}.db")
+        self.db.backup(path)
+        for old in sorted(f for f in os.listdir(folder) if f.startswith("bot-") and f.endswith(".db"))[:-14]:
+            os.remove(os.path.join(folder, old))
+        log("database backup:", path)
+        return path
+
     def week_tick(self, now):
         """Sunday 19:00: everyone with notifications on gets their week."""
         today = kyiv_midnight(*kyiv_today())
@@ -1984,7 +2009,7 @@ class Bot:
         text = ("📊 <b>Коли обленерго публікували графік на завтра</b>\n<i>середній час за тиждень</i>\n\n" + "\n".join(lines))
         if ch and ch[0][0] > 0:
             text += f"\n\nНайчастіше змінювали графік: {short_region(ch[0][1])} ({ch[0][0]} разів за тиждень)."
-        self.channel_post(text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]])
+        self.channel_post(text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]])
 
     def dtek_view(self, u, now=None):
         """Official ways to report an outage, plus a ready-made text. The person sends it themselves."""
@@ -2296,7 +2321,7 @@ class Bot:
         """A group chat is stored like a person: its address, its reminders. Groups default to quiet nights and power-back messages."""
         if not self.db.one("SELECT 1 FROM users WHERE chat_id=?", (chat_id,)):
             self.user(chat_id, "uk")
-            self.set_user(chat_id, quiet=1, ret=1)
+            self.set_user(chat_id, quiet=1, ret=1, source="group")
         return self.user(chat_id)
 
     def group_message(self, m):
@@ -2423,6 +2448,9 @@ class Bot:
         cmd, _, arg = m.partition(" ")
         cmd = cmd.split("@")[0].lower()
         arg = arg.strip()
+        if cmd == "/start" and not u["source"]:
+            src = "channel" if arg == "ch" else "share" if (arg.startswith(("st_", "ds_")) or parse_start(arg)) else "direct"
+            self.set_user(chat_id, source="group" if chat_id < 0 else src)
         sm = _re.fullmatch(r"st_(\d{1,9})|ds_(\d{1,9})_(\d{1,9})", arg) if cmd == "/start" else None
         if sm and sm[1] and sm[1] in STREET_BY_ID:  # a neighbour's link: open on their street, they pick the house
             self.set_user(chat_id, region="kyiv")
@@ -2588,6 +2616,27 @@ class Bot:
 
     def stats_text(self, lang):
         """Admin-only summary of who uses the bot (/stats, only for ADMIN_CHAT_ID)."""
+        base = self.stats_base(lang)
+        now = int(time.time())
+        today = kyiv_midnight(*kyiv_today())
+        days = []
+        for k in range(6, -1, -1):
+            d0 = today - k * 86400
+            c = self.db.one("SELECT COUNT(*) FROM users WHERE chat_id>0 AND joined>=? AND joined<?", (d0, d0 + 86400))[0]
+            g = time.gmtime(d0 + 43200)
+            days.append(f"{g.tm_mday:02d}.{g.tm_mon:02d} <b>{c}</b>")
+        src = {r["source"] or "?": r["c"] for r in self.db.q("SELECT source, COUNT(*) c FROM users WHERE chat_id>0 GROUP BY source")}
+        names = {"channel": "канал", "share": "посилання сусідів", "direct": "напряму", "?": "до обліку"} if lang == "uk" else \
+            {"channel": "channel", "share": "neighbours' links", "direct": "direct", "?": "before tracking"}
+        groups = self.db.one("SELECT COUNT(*) FROM users WHERE chat_id<0 AND blocked=0")[0]
+        gaddr = self.db.one("SELECT COUNT(*) FROM addresses WHERE chat_id<0")[0]
+        extra = ("\n\n📈 <b>Нові за 7 днів:</b>\n" if lang == "uk" else "\n\n📈 <b>New in 7 days:</b>\n") + " · ".join(days)
+        extra += ("\n\n🔗 <b>Звідки прийшли:</b> " if lang == "uk" else "\n\n🔗 <b>Came from:</b> ") + \
+            ", ".join(f"{names.get(k, k)} {v}" for k, v in sorted(src.items(), key=lambda kv: -kv[1]))
+        extra += (f"\n🏠 <b>Чатів будинків:</b> {groups} (з адресою: {gaddr})" if lang == "uk" else f"\n🏠 <b>Building chats:</b> {groups} (with an address: {gaddr})")
+        return base + extra
+
+    def stats_base(self, lang):
         n = lambda sql, a=(): self.db.one(sql, a)[0]  # noqa: E731
         now = int(time.time())
         regions = self.db.q("SELECT region, COUNT(*) c FROM users WHERE blocked=0 GROUP BY region ORDER BY c DESC")
@@ -3613,6 +3662,7 @@ class Bot:
             self.safe(self.pubs_post, now)
         if not isinstance(self.tg, FakeTG):
             self.safe(self.week_tick, now)
+            self.safe(self.backup_tick, now)
         if not isinstance(self.tg, FakeTG) and now - getattr(self, "health_at", 0) >= HEALTH_EVERY:
             self.health_at = now
             self.safe(self.health_tick, now)
@@ -3736,7 +3786,7 @@ class Bot:
         text = (f"{title}, <b>{d} {month}</b>\n\n" + "\n".join(lines)
                 + "\n\n<i>За даними обленерго та ДТЕК. Розклад своєї черги, сповіщення перед відключенням "
                   "і пошук черги за адресою — у боті:</i>")
-        return text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+        return text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]]
 
     def channel_region_spans(self, day_mid):
         """{region: 'до 8 год без світла' / 'не заплановано'} for the regions that published day_mid."""
@@ -3790,7 +3840,7 @@ class Bot:
                               "де обленерго публікують їх у відкритому доступі.\n\n"
                               "У боті можна вибрати свою чергу або знайти її за адресою, отримувати сповіщення "
                               "перед відключенням і повідомити, якщо світла немає поза графіком.",
-                              [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}"}]]):
+                              [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]]):
             self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, int(now)))
         for region in REGIONS:
             note = active_notice(_scheds[region]["data"], now)
@@ -3799,7 +3849,7 @@ class Bot:
                         else "графіки погодинних відключень скасовано")
                 self.channel_post(f"⚠️ <b>{region_name(region, 'uk')}: {what}.</b>\nРозклад погодинних відключень зараз може не виконуватися.\n\n"
                                   f"<i>{html.escape(REGIONS[region]['co']['uk'])}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>",
-                                  [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]])
+                                  [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]])
         self.channel_feed(today, now, is_today=True)
         if mins >= 12 * 60:  # tomorrow's schedules from noon on
             self.channel_feed(kyiv_midnight(*kyiv_today(1)), now, is_today=False)
@@ -3892,7 +3942,7 @@ class Bot:
         row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
         st = json.loads(row["value"]) if row else {"regs": {}}
         save = lambda: self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(st), int(now)))  # noqa: E731
-        btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}],
+        btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}],
                [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
         rel, date = self.feed_day_words(day_mid, is_today)
         summary = None
@@ -3936,7 +3986,7 @@ class Bot:
                 g = time.gmtime(now)
                 off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
                 text = body + f"\n\n<i>Оновлено {time.strftime('%H:%M', time.gmtime(now + off))}</i>"
-                btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+                btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]]
                 if st.get("mid"):
                     self.tg.edit(CHANNEL, st["mid"], text, btn)
                 else:
@@ -4463,6 +4513,16 @@ def self_test():
          lambda s: s == "OK")
     if sp:
         step("invite: a neighbour opens it -> the street's houses", lambda: bot.text(8101, f"/start {sp[0]}", "uk"), lambda s: "Перемишльська" in s)
+
+    # daily backup and the extended /stats
+    real_today = kyiv_today
+    bk = bot.backup_tick(kyiv_midnight(*kyiv_today()) + 4 * 3600 + 60, folder=os.path.join(tmp, "backup"))
+    ok_b = bool(bk) and os.path.exists(bk) and sqlite3.connect(bk).execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0
+    step("backup: a copy of the database at 04:00", lambda: tg.out.append(("send", 1, "OK" if ok_b else f"BAD {bk}", None)), lambda s: s == "OK")
+    bot.text(8201, "/start ch", "uk")
+    st8 = bot.stats_text("uk")
+    step("stats: per day, sources, groups", lambda: tg.out.append(("send", 1, "OK" if "Нові за 7 днів" in st8 and "канал 1" in st8 and "Чатів будинків" in st8 else "BAD " + st8[-300:], None)),
+         lambda s: s == "OK")
 
     # group chats
     G, ADM, MEM = -100777, 501, 502
