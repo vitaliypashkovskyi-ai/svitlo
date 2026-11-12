@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.9"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.10"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -3140,8 +3140,8 @@ class Bot:
                            f"до {h(hi)} год без світла" if lo == 0 or lo == hi else f"{h(lo)}–{h(hi)} год без світла")
         return out
 
-    def channel_tomorrow_text(self, day_mid):
-        """The one 'tomorrow' post: published regions, then who we still wait for. None until one region publishes."""
+    def channel_tomorrow_text(self, day_mid, title="🌙 <b>Графіки на завтра"):
+        """A live post: published regions, then who we still wait for. None until one region publishes."""
         spans = self.channel_region_spans(day_mid)
         if not spans:
             return None
@@ -3150,7 +3150,7 @@ class Bot:
         month = next(k for k, v in UA_MONTHS.items() if v == m)
         lines = [f"<b>{short(r)}</b> — {spans[r]}" for r in REGIONS if r in spans]
         waiting = [short(r) for r in REGIONS if r not in spans]
-        text = f"🌙 <b>Графіки на завтра, {d} {month}</b>\n<i>доповнюється, щойно обленерго публікують</i>\n\n" + "\n".join(lines)
+        text = f"{title}, {d} {month}</b>\n<i>доповнюється, щойно обленерго публікують</i>\n\n" + "\n".join(lines)
         if waiting:
             more = f" та ще {len(waiting) - 4}" if len(waiting) > 4 else ""
             text += "\n\n⏳ Ще чекаємо: " + ", ".join(waiting[:4]) + more
@@ -3179,28 +3179,30 @@ class Bot:
                               "перед відключенням і повідомити, якщо світла немає поза графіком.",
                               [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}"}]]):
             self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, int(now)))
-        if 7 * 60 <= mins < 7 * 60 + 30 and self.mark(0, f"chan:today:{today}"):
-            self.channel_post(*self.channel_digest(today, "☀️ Графіки відключень на сьогодні", now))
+        if mins >= 7 * 60:  # from 07:00: one 'today' post, edited as late regions publish or change during the day
+            self.channel_live(f"chan:todaypost:{today}", self.channel_tomorrow_text(today, "☀️ <b>Графіки на сьогодні"), now)
         if mins >= 12 * 60:  # from noon: one 'tomorrow' post, edited as more regions publish or change
             tomorrow = kyiv_midnight(*kyiv_today(1))
-            body = self.channel_tomorrow_text(tomorrow)
-            if body:
-                key = f"chan:tompost:{tomorrow}"
-                row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
-                st = json.loads(row["value"]) if row else {}
-                if st.get("body") != body:
-                    g = time.gmtime(now)
-                    off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
-                    text = body + f"\n\n<i>Оновлено {time.strftime('%H:%M', time.gmtime(now + off))}</i>"
-                    btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
-                    if st.get("mid"):
-                        self.tg.edit(CHANNEL, st["mid"], text, btn)
-                    else:
-                        res = self.channel_post(text, btn)
-                        st["mid"] = ((res or {}).get("result") or {}).get("message_id") if isinstance(res, dict) else None
-                    if st.get("mid"):
-                        st["body"] = body
-                        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(st, ensure_ascii=False), int(now)))
+            self.channel_live(f"chan:tompost:{tomorrow}", self.channel_tomorrow_text(tomorrow), now)
+
+    def channel_live(self, key, body, now):
+        """Send the post once, then edit it whenever its body changes."""
+        if body:
+            row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
+            st = json.loads(row["value"]) if row else {}
+            if st.get("body") != body:
+                g = time.gmtime(now)
+                off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
+                text = body + f"\n\n<i>Оновлено {time.strftime('%H:%M', time.gmtime(now + off))}</i>"
+                btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+                if st.get("mid"):
+                    self.tg.edit(CHANNEL, st["mid"], text, btn)
+                else:
+                    res = self.channel_post(text, btn)
+                    st["mid"] = ((res or {}).get("result") or {}).get("message_id") if isinstance(res, dict) else None
+                if st.get("mid"):
+                    st["body"] = body
+                    self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(st, ensure_ascii=False), int(now)))
 
     def mark(self, chat_id, mark):
         """True the first time a mark is seen for this chat (so each reminder is sent once)."""
@@ -3600,12 +3602,12 @@ def self_test():
     bot.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, 0))
     n0 = len(tg.out)
     bot.channel_tick(t20)
-    first = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    first = [o for o in tg.out[n0:] if o[1] == CHANNEL and "на завтра" in o[2]]
     bot.channel_tick(t20 + 60)
-    same = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    same = [o for o in tg.out[n0:] if o[1] == CHANNEL and "на завтра" in o[2]]
     zsc["data"]["fact"]["data"][str(tmid)] = {g: {str(h): "yes" for h in range(1, 25)} for g in [f"GPV{q}" for q in STANDARD_GROUPS]}
     bot.channel_tick(t20 + 120)
-    after = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    after = [o for o in tg.out[n0:] if o[1] == CHANNEL and "на завтра" in o[2]]
     ok_t = (len(first) == 1 and first[0][0] == "send" and "Графіки на завтра" in first[0][2] and "Житомирська</b>" in first[0][2]
             and "Ще чекаємо" in first[0][2] and len(same) == 1 and len(after) == 2 and after[1][0] == "edit"
             and "Житомирська</b> — відключень не заплановано" in after[1][2])
@@ -3613,7 +3615,7 @@ def self_test():
     step("channel: tomorrow post once, then edited", lambda: tg.out.append(("send", 1, "OK" if ok_t else "BAD", None)), lambda s: s == "OK")
     zsc.clear()
     zsc.update(saved_z)
-    bot.db.q("DELETE FROM cache WHERE key=?", ("chan:intro",))
+    bot.db.q("DELETE FROM cache WHERE key=? OR key LIKE 'chan:todaypost:%'", ("chan:intro",))
 
     # channel: intro once, 07:00 digest once
     t7 = kyiv_midnight(*kyiv_today()) + 7 * 3600 + 300
@@ -3622,7 +3624,7 @@ def self_test():
     posts = [o for o in tg.out[n0:] if o[1] == CHANNEL]
     bot.channel_tick(t7 + 60)
     again = [o for o in tg.out[n0:] if o[1] == CHANNEL]
-    ok_ch = (len(posts) == 2 and "Світло" in posts[0][2] and "на сьогодні" in posts[1][2] and "Львівська область" in posts[1][2]
+    ok_ch = (len(posts) == 2 and "Світло" in posts[0][2] and "Графіки на сьогодні" in posts[1][2] and "Львівська" in posts[1][2]
              and len(again) == 2 and posts[1][3][0][0]["url"].startswith("https://t.me/"))
     print("     channel digest:", posts[1][2][:600].replace("\n", " | ") if len(posts) > 1 else posts)
     step("channel: intro + today's digest once", lambda: tg.out.append(("send", 1, "OK" if ok_ch else "BAD", None)), lambda s: s == "OK")
