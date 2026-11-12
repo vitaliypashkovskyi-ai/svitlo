@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.16"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.17"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -362,7 +362,7 @@ T = {
         "warn": "⚠️ Через {m} хв відключення світла ({t}).",
         "charge": "🔋 <b>Зарядіть телефон і павербанк.</b>\nО {t} вимкнуть світло на <b>{h}</b> (до {end}).",
         "now_title": "<b>Зараз, {t}</b>", "now_on": "🟢 є до {t}", "now_off": "🔴 немає до {t}", "now_maybe": "🟡 можливо немає до {t}",
-        "now_on_end": "🟢 є", "now_off_end": "🔴 немає", "now_none": "графік не опубліковано",
+        "now_on_end": "🟢 є", "now_off_end": "🔴 немає", "now_none": "графік не опубліковано", "now_noqueue": "такої черги немає в графіку — перевірте адресу",
         "week_title": "<b>Ваш тиждень</b> · {label} · черга {q}",
         "week_total": "Без світла <b>{h}</b> за 7 днів.", "week_more": " Це на {d} більше, ніж тижнем раніше.",
         "week_less": " Це на {d} менше, ніж тижнем раніше.", "week_same": "",
@@ -379,7 +379,7 @@ T = {
         "stats": "📊 <b>Статистика бота</b>\n\n👥 Користувачів: <b>{total}</b>\n✅ Активних: {active}\n🚫 Заблокували бота: {blocked}\n"
                  "🏠 З адресою: {with_addr}\n🔔 З нагадуваннями: {notify}\n🆕 Нових за добу: {d1} · за тиждень: {d7}\n\n"
                  "📍 <b>Регіони</b>\n{regions}\n\n🗂 Адрес усього: {addrs}\n🔢 Популярні черги: {queues}\n🌐 Мова: {langs}",
-        "commands": [("now", "Графік зараз"), ("pic", "Картинка графіка"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
+        "commands": [("now", "Графік зараз"), ("all", "Усі мої адреси зараз"), ("pic", "Картинка графіка"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
@@ -492,7 +492,7 @@ T = {
         "warn": "⚠️ Power outage in {m} min ({t}).",
         "charge": "🔋 <b>Charge your phone and power bank.</b>\nThe power goes off at {t} for <b>{h}</b> (until {end}).",
         "now_title": "<b>Now, {t}</b>", "now_on": "🟢 on until {t}", "now_off": "🔴 off until {t}", "now_maybe": "🟡 maybe off until {t}",
-        "now_on_end": "🟢 on", "now_off_end": "🔴 off", "now_none": "schedule not published",
+        "now_on_end": "🟢 on", "now_off_end": "🔴 off", "now_none": "schedule not published", "now_noqueue": "this queue isn't in the schedule — check the address",
         "week_title": "<b>Your week</b> · {label} · queue {q}",
         "week_total": "No power for <b>{h}</b> in 7 days.", "week_more": " That's {d} more than the week before.",
         "week_less": " That's {d} less than the week before.", "week_same": "",
@@ -509,7 +509,7 @@ T = {
         "stats": "📊 <b>Bot stats</b>\n\n👥 Users: <b>{total}</b>\n✅ Active: {active}\n🚫 Blocked the bot: {blocked}\n"
                  "🏠 With an address: {with_addr}\n🔔 With reminders: {notify}\n🆕 New in 24 h: {d1} · in 7 days: {d7}\n\n"
                  "📍 <b>Regions</b>\n{regions}\n\n🗂 Addresses in total: {addrs}\n🔢 Top queues: {queues}\n🌐 Language: {langs}",
-        "commands": [("now", "Schedule now"), ("pic", "Schedule picture"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
+        "commands": [("now", "Schedule now"), ("all", "All my addresses now"), ("pic", "Schedule picture"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
 }
@@ -1843,8 +1843,10 @@ class Bot:
         t = T[lang]
         data = schedule(a["region"])
         days = days_from_today(data, now) if data else []
-        if not days or days[0][0] > now or queue_key(a["queue"]) not in days[0][1]:
+        if not days or days[0][0] > now:
             return t["now_none"]
+        if queue_key(a["queue"]) not in days[0][1]:
+            return t["now_noqueue"]
         seq = "".join(slots(g.get(queue_key(a["queue"]))) for _, g in days)
         idx = min(len(seq) - 1, int((now - days[0][0]) // 1800))
         cur, j = seq[idx], idx + 1
@@ -1860,7 +1862,8 @@ class Bot:
         off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
         lines = [t["now_title"].format(t=time.strftime("%H:%M", time.gmtime(now + off))), ""]
         for a in self.addresses(u["chat_id"]):
-            lines.append(f"<b>{html.escape(a['label'])}</b> · {a['queue']} — {self.now_line(a, u['lang'], now)}")
+            qlabel = a["label"] in (T["uk"]["queue_label"].format(q=a["queue"]), T["en"]["queue_label"].format(q=a["queue"]))
+            lines.append(f"<b>{html.escape(a['label'])}</b>" + ("" if qlabel else f" · {a['queue']}") + f" — {self.now_line(a, u['lang'], now)}")
         return "\n".join(lines), [[{"text": t["b_refresh"], "callback_data": "nw"}, {"text": t["b_addr"], "callback_data": "a"}]]
 
     # ---------- 4. weekly stats from the daily history
@@ -2316,10 +2319,9 @@ class Bot:
         elif cmd == "/help":
             self.tg.send(chat_id, t["help"])
         elif cmd == "/now":
-            if len(self.addresses(chat_id)) > 1:
-                self.tg.send(chat_id, *self.now_view(u))
-            else:
-                self.tg.send(chat_id, *self.status_view(u))
+            self.tg.send(chat_id, *self.status_view(u))
+        elif cmd == "/all":
+            self.tg.send(chat_id, *self.now_view(u))
         elif cmd == "/pic":
             a = self.active_address(u)
             if not a:
@@ -4263,7 +4265,8 @@ def self_test():
     zgr = next(iter(region_groups("zhytomyr")), "1.1")
     bot.add_address(NW, "Дім", zgr, "zhytomyr")
     bot.add_address(NW, "Дача", "1.1", "volyn")
-    step("/now: one line per address", lambda: bot.text(NW, "/now"), lambda s: "Зараз" in s)
+    step("/now: the full status as before", lambda: bot.text(NW, "/now"), lambda s: "Черга" in s and "Зараз," not in s)
+    step("/all: one line per address", lambda: bot.text(NW, "/all"), lambda s: "Зараз" in s)
     nv = tg.out[-1][2] if tg.out else ""
     step("/now: both addresses listed", lambda: tg.out.append(("send", 1, "OK" if "Дім" in nv and "Дача" in nv and "графік не опубліковано" in nv else "BAD " + nv[:200], None)),
          lambda s: s == "OK")
