@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.11"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.12"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -342,6 +342,8 @@ T = {
         "crowd_off": "⚠️ <b>Схоже на аварійне відключення:</b> {n} з черги {q} повідомили, що світла немає, хоча за графіком воно має бути.",
         "crowd_on": "💡 {n} з черги {q} повідомили, що світло вже є.",
         "crowd_counts": "<i>Повідомлення людей за годину: ⚫ {off} · 💡 {on}</i>",
+        "notice_emergency": "⚠️ <b>{co}: з {t} діють графіки аварійних відключень (ГАВ).</b> Розклад нижче зараз може не виконуватися — <a href=\"{url}\">деталі</a>.",
+        "notice_cancel": "⚠️ <b>{co} повідомило ({t}): графіки погодинних відключень скасовано.</b> Розклад нижче може не відповідати дійсності — <a href=\"{url}\">деталі</a>.",
         "crowd_alert": "⚠️ <b>Можливе аварійне відключення</b> у черзі {q}: {n} повідомили, що світла немає, хоча за графіком воно має бути.\nЯкщо у вас світло є — натисніть «💡 Світло є».",
         "people": lambda n: f"{n} {'людина' if n % 10 == 1 and n % 100 != 11 else 'людини' if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else 'людей'}",
         "b_add": "➕ Додати адресу", "b_back": "⬅️ Назад",
@@ -464,6 +466,8 @@ T = {
         "crowd_off": "⚠️ <b>Looks like an emergency outage:</b> {n} in queue {q} reported no power, although the schedule says it should be on.",
         "crowd_on": "💡 {n} in queue {q} reported that power is already back.",
         "crowd_counts": "<i>People's reports in the last hour: ⚫ {off} · 💡 {on}</i>",
+        "notice_emergency": "⚠️ <b>{co}: emergency outage schedules (ГАВ) apply since {t}.</b> The schedule below may not hold right now — <a href=\"{url}\">details</a>.",
+        "notice_cancel": "⚠️ <b>{co} announced ({t}) that the hourly outage schedules are cancelled.</b> The schedule below may not be accurate — <a href=\"{url}\">details</a>.",
         "crowd_alert": "⚠️ <b>Possible emergency outage</b> in queue {q}: {n} reported no power, although the schedule says it should be on.\nIf you do have power, tap «💡 Power is on».",
         "people": lambda n: f"{n} {'person' if n == 1 else 'people'}",
         "b_add": "➕ Add address", "b_back": "⬅️ Back",
@@ -596,6 +600,12 @@ def schedule(region="kyiv", force=False):
                 sc["ok_at"] = time.time()
                 sc["err"] = None
                 ok = True
+                if src in NOTICE_READERS:
+                    try:
+                        n = NOTICE_READERS[src]()
+                        sc["data"]["notices"] = [n] if n else []
+                    except Exception as e:
+                        log("notice read failed:", region, e)
             except Exception as e:
                 log("schedule fetch failed:", region, e)
                 sc["err"], sc["err_at"] = (repr(e)[:200], time.time())
@@ -1206,6 +1216,106 @@ OE_READERS = {"loe": read_loe, "mk": read_mk, "if": read_if, "ck": read_ck, "pl"
               "zp": read_zp, "rv": read_rv, "kh": read_kh, "cv": read_cv, "kr": read_kr, "voe": read_voe, "zt": read_zt, "hoe": read_hoe}
 
 
+NOTICE_TTL = 6 * 3600  # a notice holds until a newer schedule post, or this long at most
+NOTICE_EMERG = _re.compile(r"аварійн\w*\s+відключ|\bГАВ\b", _re.I)
+NOTICE_END = _re.compile(r"(аварійн\w*\s+відключ\w*|\bГАВ\b)[^.\n]{0,40}скасов|скасов\w*[^.\n]{0,40}(аварійн|\bГАВ\b)", _re.I)
+NOTICE_CANCEL = _re.compile(r"скасов\w*[^.\n]{0,60}(графік|відключ)|(графік|відключ)\w*[^.\n]{0,60}скасов|не\s+застосовуватим", _re.I)
+NOTICE_SCHED = _re.compile(r"графік\w*\s+погодинн|\bГПВ\b|черга\s*\d\.\d", _re.I)
+
+
+def kyiv_ts(y, mo, d, h=0, mi=0):
+    return kyiv_midnight(int(y), int(mo), int(d)) + int(h) * 3600 + int(mi) * 60
+
+
+def pick_notice(items, url, now=None):
+    """items: [(ts, text)] newest first. The newest post that is a notice or a schedule decides:
+    emergency outages / cancelled schedules -> a notice; a schedule post or 'ГАВ скасовано' -> none."""
+    now = now or time.time()
+    for ts, text in items:
+        if not ts or ts > now + 600:
+            continue
+        if now - ts > NOTICE_TTL:
+            break
+        if NOTICE_END.search(text):
+            return None
+        if NOTICE_EMERG.search(text):
+            return {"kind": "emergency", "at": int(ts), "text": text.strip()[:300], "url": url}
+        if NOTICE_CANCEL.search(text):
+            return {"kind": "cancel", "at": int(ts), "text": text.strip()[:300], "url": url}
+        if NOTICE_SCHED.search(text):
+            return None
+    return None
+
+
+def notice_ck():
+    posts = oe_get("https://www.cherkasyoblenergo.com/api/v1/posts/main?lang=uk&limit=20").get("data") or []
+    items = []
+    for p in posts:
+        m = _re.match(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})", str(p.get("publishedAt")))
+        if m:
+            items.append((kyiv_ts(*m.groups()), str(p.get("title") or "")))
+    return pick_notice(sorted(items, reverse=True), "https://www.cherkasyoblenergo.com")
+
+
+def notice_kh():
+    feed = oe_page("https://oblenergo.kharkiv.ua/uk/rss.xml")
+    items = []
+    for item in _re.findall(r"<item>(.*?)</item>", feed, _re.S):
+        tm = _re.search(r"<title>(.*?)</title>", item, _re.S)
+        dm = _re.search(r"<description>(.*?)</description>", item, _re.S)
+        body = html_text(html.unescape(dm.group(1))) if dm else ""
+        when = _re.search(r"(\d{2})\.(\d{2})\.(\d{4})\s*-\s*(\d{2}):(\d{2})", body)  # the post's own date and time
+        if when:
+            items.append((kyiv_ts(when[3], when[2], when[1], when[4], when[5]), html.unescape(tm.group(1) if tm else "")))
+    return pick_notice(sorted(items, reverse=True), "https://oblenergo.kharkiv.ua/uk")
+
+
+def notice_kr():
+    page = oe_page("https://t.me/s/SvitloOleksandriyskohoRaionu")
+    items = []
+    for m in _re.finditer(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>.*?<time[^>]*datetime="([^"]+)"', page, _re.S):
+        try:
+            ts = datetime.fromisoformat(m.group(2)).timestamp()
+        except ValueError:
+            continue
+        items.append((ts, html_text(m.group(1))))
+    return pick_notice(sorted(items, reverse=True), "https://t.me/SvitloOleksandriyskohoRaionu")
+
+
+def notice_zp():
+    """Articles carry a date but no time: the newest article about today counts as fresh."""
+    page = oe_page("https://www.zoe.com.ua/outage/")
+    y, m, d = kyiv_today()
+    for art in _re.findall(r"<article.*?</article>", page, _re.S)[:1]:
+        h = _re.search(r"<h2[^>]*>(.*?)</h2>", art, _re.S)
+        title = html_text(h.group(1)).strip() if h else ""
+        dm = _re.search(r"(\d{1,2})\s+([а-яіїє]+)", title.lower())
+        if dm and ua_day(dm[1], dm[2]) == (y, m, d) and "промислов" not in title.lower():
+            return pick_notice([(time.time(), title)], "https://www.zoe.com.ua/outage/")
+    return None
+
+
+def notice_zt():
+    req = urllib.request.Request("https://www.ztoe.com.ua/unhooking-search.php",
+                                 headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        page = r.read(3_000_000).decode("cp1251", "replace")
+    i = page.find("УВАГА")
+    top = html_text(page[i:i + 3000]) if i >= 0 else ""
+    if NOTICE_EMERG.search(top) and not NOTICE_END.search(top):
+        return {"kind": "emergency", "at": int(time.time()), "text": " ".join(top.split())[:300], "url": "https://www.ztoe.com.ua/unhooking-search.php"}
+    return None
+
+
+NOTICE_READERS = {"ck": notice_ck, "kh": notice_kh, "kr": notice_kr, "zp": notice_zp, "zt": notice_zt}
+
+
+def active_notice(data, now=None):
+    now = now or time.time()
+    n = ((data or {}).get("notices") or [None])[0]
+    return n if n and now - n["at"] <= NOTICE_TTL else None
+
+
 def region_groups(region, data=None):
     """Queues of a region: today's schedule if published, else the standard 1.1 … 6.2."""
     data = data or schedule(region)
@@ -1300,6 +1410,12 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
     if region != "kyiv":
         head += f"\n<i>{region_name(region, lang)}</i>"
     lines = [head]
+    note = active_notice(data, now)
+    if note:
+        g = time.gmtime(note["at"])
+        off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
+        lines += [t["notice_" + note["kind"]].format(co=html.escape((REGIONS[region].get("co") or {}).get(lang, "")),
+                                                    t=time.strftime("%H:%M", time.gmtime(note["at"] + off)), url=note["url"]), ""]
     today = days[0] if days and days[0][0] <= now else None
     if today:
         seq = "".join(slots(g.get(key)) for _, g in days)
@@ -3086,6 +3202,13 @@ class Bot:
                                      [[{"text": t2["b_rep_off"], "callback_data": "rp:off"},
                                        {"text": t2["b_rep_on"], "callback_data": "rp:on"}],
                                       [{"text": t2["b_dtek"], "callback_data": "dtek"}]])
+                note = active_notice(data, now)
+                if note and self.mark(cid, f"notice:{region}:{note['at']}:{s['aid']}"):
+                    nt = status_text(qn, s["lang"], s["label"], now, region)
+                    if user_quiet:
+                        self.db.q("INSERT OR REPLACE INTO pending(chat_id,key,text,at) VALUES(?,?,?,?)", (cid, f"ntc:{s['aid']}", nt, int(now)))
+                    else:
+                        self.tg.send(cid, nt)
                 for ev, mark in events:
                     if not self.mark(cid, f"{mark}:{s['aid']}"):
                         continue
@@ -3179,6 +3302,14 @@ class Bot:
                               "перед відключенням і повідомити, якщо світла немає поза графіком.",
                               [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}"}]]):
             self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, int(now)))
+        for region in REGIONS:
+            note = active_notice(_scheds[region]["data"], now)
+            if note and self.mark(0, f"chan:notice:{region}:{note['at']}"):
+                what = ("діють графіки аварійних відключень (ГАВ)" if note["kind"] == "emergency"
+                        else "графіки погодинних відключень скасовано")
+                self.channel_post(f"⚠️ <b>{region_name(region, 'uk')}: {what}.</b>\nРозклад погодинних відключень зараз може не виконуватися.\n\n"
+                                  f"<i>{html.escape(REGIONS[region]['co']['uk'])}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>",
+                                  [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]])
         self.channel_feed(today, now, is_today=True)
         if mins >= 12 * 60:  # tomorrow's schedules from noon on
             self.channel_feed(kyiv_midnight(*kyiv_today(1)), now, is_today=False)
@@ -3756,6 +3887,37 @@ def self_test():
              lambda s: s == "OK")
     except urllib.error.URLError as e:
         print("     Volyn picture test skipped:", e)
+
+    # notices: emergency outages and cancelled schedules
+    nw = time.time()
+    n1 = pick_notice([(nw - 600, "По Черкаській області застосовані графіки аварійних відключень (ГАВ)"),
+                      (nw - 9000, "Оновлено графік погодинних відключень (ГПВ) на 7 листопада")], "u", nw)
+    n2 = pick_notice([(nw - 600, "Оновлено графік погодинних відключень (ГПВ) на 7 листопада"),
+                      (nw - 3000, "По Черкаській області застосовані графіки аварійних відключень (ГАВ)")], "u", nw)
+    n3 = pick_notice([(nw - 8 * 3600, "застосовані графіки аварійних відключень (ГАВ)")], "u", nw)
+    n4 = pick_notice([(nw - 60, "Графіки аварійних відключень скасовано")], "u", nw)
+    n5 = pick_notice([(nw - 60, "До 15:00 скасовані відключення згідно із графіком")], "u", nw)
+    ok_n = (n1 and n1["kind"] == "emergency") and n2 is None and n3 is None and n4 is None and (n5 and n5["kind"] == "cancel")
+    step("notices: ГАВ on, superseded by a schedule post, expired, ended; cancel", lambda: tg.out.append(("send", 1, "OK" if ok_n else f"BAD {n1} {n2} {n3} {n4} {n5}", None)),
+         lambda s: s == "OK")
+    schedule("cherkasy")
+    csc = _scheds["cherkasy"]
+    saved_c = dict(csc)
+    if csc["data"]:
+        csc["data"] = dict(csc["data"], notices=[{"kind": "emergency", "at": int(nw - 300), "text": "ГАВ", "url": "https://www.cherkasyoblenergo.com"}])
+        csc["at"] = time.time()
+        st_n = status_text("1.1", "uk", None, nw, "cherkasy")
+        step("notices: warning on top of the schedule", lambda: tg.out.append(("send", 1, "OK" if "діють графіки аварійних відключень" in st_n and "деталі" in st_n else "BAD " + st_n[:200], None)),
+             lambda s: s == "OK")
+        n0 = len(tg.out)
+        bot.channel_tick(nw)
+        cp = [o[2] for o in tg.out[n0:] if o[1] == CHANNEL and "⚠️" in o[2]]
+        bot.channel_tick(nw + 60)
+        cp2 = [o[2] for o in tg.out[n0:] if o[1] == CHANNEL and "⚠️" in o[2]]
+        step("notices: one channel post", lambda: tg.out.append(("send", 1, "OK" if len(cp) == 1 and len(cp2) == 1 and "Черкаська область" in cp[0] else f"BAD {cp2}", None)),
+             lambda s: s == "OK")
+    csc.clear()
+    csc.update(saved_c)
 
     # YASNO backup: planned-outages JSON -> same hours as the main source would give
     y, mo, d = kyiv_today()
