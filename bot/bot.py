@@ -144,6 +144,7 @@ QUIET_FROM, QUIET_TO = 23 * 60, 7 * 60
 RETURN_WINDOW = 10            # "power is back" message within 10 min after the scheduled time
 CACHE_TTL = {"cities": 7 * 86400, "streets": 86400, "houses": 7 * 86400, "group": 7 * 86400}
 SEND_RATE = 25                # messages per second, below Telegram's ~30/s limit
+BULK_RATE = 20                # of those, mass notifications use at most this many, so reminders never wait behind them
 # Self-update: once an hour the bot compares these files with the GitHub repo, runs the new
 # version's self-test and only then switches to it. AUTO_UPDATE=0 in .env turns it off.
 AUTO_UPDATE = os.environ.get("AUTO_UPDATE", "1").strip() != "0"
@@ -155,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.17"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.18"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1749,6 +1750,24 @@ class Bot:
         self.chat_locks = {}
         self.locks_lock = threading.Lock()
         self.stale_alerted = False
+        import queue
+        self.bulk = queue.PriorityQueue()  # (priority, seq, chat_id, text): mass notifications, soonest outage first
+        self.bulk_seq = 0
+
+    def send_bulk(self, chat_id, text, priority=10 ** 6):
+        """Queue a mass notification (schedule changes, tomorrow's schedule, notices, weekly stats).
+        Lower priority = sent first: the minutes until that person's next outage."""
+        if isinstance(self.tg, FakeTG):
+            return self.tg.send(chat_id, text)
+        self.bulk_seq += 1
+        self.bulk.put((priority, self.bulk_seq, chat_id, text))
+
+    def bulk_sender(self):
+        while True:
+            _, _, chat_id, text = self.bulk.get()
+            t0 = time.time()
+            self.safe(self.tg.send, chat_id, text)
+            time.sleep(max(0.0, 1.0 / BULK_RATE - (time.time() - t0)))
 
     # ---------- helpers
     def user(self, chat_id, lang_code=None):
@@ -1909,7 +1928,7 @@ class Bot:
             if self.mark(u["chat_id"], f"week:{today}"):
                 text = self.week_text(u, now)
                 if text != T[u["lang"]]["week_none"]:
-                    self.tg.send(u["chat_id"], text)
+                    self.send_bulk(u["chat_id"], text)
 
     # ---------- 6. when each oblenergo publishes tomorrow's schedule, and how often it changes it
     def pubs_post(self, now):
@@ -3467,7 +3486,7 @@ class Bot:
                 now_min = (now - days[0][0]) / 60
                 if not (now_min >= QUIET_FROM or now_min < QUIET_TO):  # flush what waited for the end of quiet hours
                     for p in self.db.q("SELECT * FROM pending ORDER BY at"):
-                        self.tg.send(p["chat_id"], p["text"])
+                        self.send_bulk(p["chat_id"], p["text"], 100)
                         self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
         if CHANNEL and not isinstance(self.tg, FakeTG):  # the self-test calls channel_tick itself
             self.safe(self.channel_tick, now)
@@ -3559,7 +3578,7 @@ class Bot:
                     if user_quiet:
                         self.db.q("INSERT OR REPLACE INTO pending(chat_id,key,text,at) VALUES(?,?,?,?)", (cid, f"ntc:{s['aid']}", nt, int(now)))
                     else:
-                        self.tg.send(cid, nt)
+                        self.send_bulk(cid, nt, 0)  # emergency notices go first
                 for ev, mark in events:
                     if not self.mark(cid, f"{mark}:{s['aid']}"):
                         continue
@@ -3568,7 +3587,7 @@ class Bot:
                         self.db.q("INSERT OR REPLACE INTO pending(chat_id,key,text,at) VALUES(?,?,?,?)",
                                   (cid, f"{ev[:3]}:{s['aid']}", text, int(now)))
                     else:
-                        self.tg.send(cid, text)
+                        self.send_bulk(cid, text, int(mins_to_off) if mins_to_off is not None else 10 ** 5)
 
 
     # ---------- channel: an intro once, then 07:00 'today' and 22:00 'tomorrow' digests for all regions
@@ -3845,6 +3864,7 @@ class Bot:
             except Exception as e:
                 log("setMyCommands failed:", e)
         threading.Thread(target=self.notifier, daemon=True).start()
+        threading.Thread(target=self.bulk_sender, daemon=True).start()
         if AUTO_UPDATE:
             threading.Thread(target=self.updater, daemon=True).start()
         pool = ThreadPoolExecutor(max_workers=8)  # a slow YASNO answer never blocks other people
@@ -4311,6 +4331,15 @@ def self_test():
     open(os.path.join(tmp, "r.png"), "wb").write(rp)
     print("     pictures:", os.path.join(tmp, "q.png"), len(qp), os.path.join(tmp, "r.png"), len(rp))
     step("pictures: queue and regions render", lambda: tg.out.append(("send", 1, "OK" if qp[:4] == b"\x89PNG" and rp[:4] == b"\x89PNG" else "BAD", None)),
+         lambda s: s == "OK")
+
+    # mass notifications go out soonest-outage first
+    import queue as _q
+    pq = _q.PriorityQueue()
+    for prio, cid_ in ((300, "late"), (5, "soon"), (10 ** 6, "none"), (0, "notice")):
+        pq.put((prio, 0, cid_, "x"))
+    order = [pq.get()[2] for _ in range(4)]
+    step("bulk: soonest outage first", lambda: tg.out.append(("send", 1, "OK" if order == ["notice", "soon", "late", "none"] else f"BAD {order}", None)),
          lambda s: s == "OK")
 
     # notices: emergency outages and cancelled schedules
