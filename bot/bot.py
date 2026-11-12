@@ -163,7 +163,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.28"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-13.1"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -2120,7 +2120,7 @@ class Bot:
         """YASNO lookup with a cache: fresh hits are instant; if YASNO is down, stale data is used."""
         rid, dso = REGIONS[region]["yasno"]
         params = {"regionId": rid, "dsoId": dso, **params}
-        key = endpoint + ":" + json.dumps(params, sort_keys=True, ensure_ascii=False)
+        key = endpoint + "@2:" + json.dumps(params, sort_keys=True, ensure_ascii=False)  # @2: YASNO renumbered streets 2026-11
         row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
         if row and time.time() - row["at"] < CACHE_TTL[endpoint]:
             return json.loads(row["value"])
@@ -2820,6 +2820,8 @@ class Bot:
                            [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
                     ok = self.channel_post(self.feed_region_text(region, groups, rel, date), btn)
                     self.tg.send(chat_id, f"Опубліковано в {CHANNEL}." if ok else "Не вдалося опублікувати.")
+        elif cmd == "/chan" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
+            self.region_channel_cmd(chat_id, arg)
         elif cmd == "/health" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
             self.tg.send(chat_id, self.health_text())
         elif cmd.startswith("/"):
@@ -3688,6 +3690,7 @@ class Bot:
         name = st.get("streets", {}).get(sid)
         if not name:
             return
+        sid = self.live_street_id(u["region"], name, sid, st.get("city", {}).get("id"))
         st["street"] = {"id": sid, "name": name}
         self.set_state(chat_id, st)
         wait = t["loading_houses"].format(street=html.escape(name))
@@ -3709,6 +3712,18 @@ class Bot:
         self.set_state(chat_id, st)
         view = self.houses_view(self.user(chat_id), 1)
         return self.tg.edit(chat_id, message_id, *view) if message_id else self.tg.send(chat_id, *view)
+
+    def live_street_id(self, region, name, sid, city_id=None):
+        """YASNO's current id for a street. Its ids change (2026-11 it renumbered Kyiv), while the bot's
+        street list keeps the old ones — so the name is looked up again; on any trouble the given id is kept."""
+        try:
+            town = {"cityId": city_id} if city_id else {}
+            res = self.yasno("streets", region, query=street_main(name)[:60], **town)
+            hit = [s for s in res if s["value"].lower() == name.lower()]
+            return str(hit[0]["id"]) if len(hit) == 1 else sid
+        except Exception as e:
+            log("street id lookup failed:", repr(e))
+            return sid
 
     def houses_view(self, u, page):
         t = T[u["lang"]]
@@ -3733,7 +3748,7 @@ class Bot:
     def all_houses(self, region, street_id, city_id=None):
         """Every house of a street. YASNO returns at most 20 matches per query, so queries
         are narrowed ('1' -> '10', '11', …) until each returns fewer. Cached for a week."""
-        key = f"allhouses:{region}:{city_id or ''}:{street_id}"
+        key = f"allhouses2:{region}:{city_id or ''}:{street_id}"
         row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
         if row and time.time() - row["at"] < CACHE_TTL["houses"]:
             return json.loads(row["value"])
@@ -4168,17 +4183,74 @@ class Bot:
             text += "\n\n⏳ Ще чекаємо: " + ", ".join(waiting[:4]) + more
         return text
 
-    def channel_post(self, text, buttons=None):
+    def channel_post(self, text, buttons=None, chat=None):
         """The sent message (truthy) when posted. On failure tells the admin, at most once an hour."""
+        chat = chat or CHANNEL
         if isinstance(self.tg, FakeTG):
-            self.tg.send(CHANNEL, text, buttons)
+            if str(chat) in getattr(self.tg, "dead", ()):
+                return False
+            self.tg.send(chat, text, buttons)
             return {"result": {"message_id": len(self.tg.out)}}
-        res = self.tg.send(CHANNEL, text, buttons)
+        res = self.tg.send(chat, text, buttons)
         if res is not None:
             return res
-        if self.mark(0, f"chan:fail:{int(time.time() // 3600)}"):
-            self.admin(f"Не вдалося опублікувати в {CHANNEL}. Перевірте, що бот — адміністратор каналу з правом публікувати.")
+        if self.mark(0, f"chan:fail:{chat}:{int(time.time() // 3600)}"):
+            self.admin(f"Не вдалося опублікувати в {chat}. Перевірте, що бот — адміністратор каналу з правом публікувати.")
         return False
+
+    # ---------- region channels: the admin links a channel to a region (/chan), the bot posts only that region there
+    def region_channels(self):
+        """{region: channel} for the regions that have their own channel."""
+        out = {}
+        for region in REGIONS:
+            row = self.db.one("SELECT value FROM cache WHERE key=?", (f"rchan:set:{region}",))
+            if row and row["value"]:
+                out[region] = row["value"]
+        return out
+
+    def region_channel_cmd(self, chat_id, arg):
+        region, _, target = arg.strip().partition(" ")
+        target = target.strip()
+        if region not in REGIONS or not target:
+            have = self.region_channels()
+            lines = [f"• {region_name(r, 'uk')} → {html.escape(c)}" for r, c in have.items()] or ["поки жодного"]
+            return self.tg.send(chat_id, "<b>Канали областей</b>\n" + "\n".join(lines)
+                                + "\n\nЯк додати: створіть канал, додайте бота адміністратором з правом публікувати, потім напишіть\n"
+                                + "<code>/chan lviv @назва_каналу</code>\nВимкнути: <code>/chan lviv off</code>\n\nРегіони: " + ", ".join(REGIONS))
+        if target.lower() in ("off", "-", "0"):
+            self.db.q("DELETE FROM cache WHERE key=?", (f"rchan:set:{region}",))
+            return self.tg.send(chat_id, f"Канал для {region_name(region, 'uk')} вимкнено.")
+        if not _re.fullmatch(r"@[A-Za-z0-9_]{4,32}|-100\d{5,15}", target):
+            return self.tg.send(chat_id, "Напишіть канал як <code>@назва</code> або <code>-100…</code> (id).")
+        name = region_name(region, "uk")
+        ok = self.channel_post(f"💡 <b>Світло · {html.escape(name)}</b>\n\n"
+                               f"Тут — лише {html.escape(name.replace(' область', ''))}: графік на завтра, щойно його опублікують, "
+                               "графік на сьогодні о 07:00, кожна зміна окремим постом і попередження про аварійні відключення.\n\n"
+                               "У боті можна вибрати свою чергу або знайти її за адресою й отримувати сповіщення перед відключенням.",
+                               [[{"text": "💡 Відкрити бота", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]], chat=target)
+        if not ok:
+            return self.tg.send(chat_id, f"Не вдалося написати в {html.escape(target)}. Додайте бота адміністратором каналу з правом публікувати й спробуйте ще раз.")
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (f"rchan:set:{region}", target, int(time.time())))
+        self.tg.send(chat_id, f"Готово: {html.escape(name)} → {html.escape(target)}. Графіки цієї області тепер ітимуть і туди.")
+
+    def region_channels_feed(self, day_mid, now, is_today, cur, rel, date):
+        """Each region channel gets its region's post as soon as it's known, then a post per change."""
+        btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}],
+               [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
+        for region, chat in self.region_channels().items():
+            if region not in cur:
+                continue
+            key = f"rchan:feed:{region}:{day_mid}"
+            row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
+            st = json.loads(row["value"]) if row else {}
+            if st.get("chat") == chat and st.get("slots") == cur[region]:
+                continue
+            old = st.get("slots") if st.get("chat") == chat else None
+            text = (self.feed_change_text(region, old, cur[region], rel, date) if old
+                    else self.feed_region_text(region, cur[region], rel, date))
+            if self.channel_post(text, btn, chat=chat):
+                self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)",
+                          (key, json.dumps({"chat": chat, "slots": cur[region]}), int(now)))
 
     def channel_tick(self, now=None):
         now = now or time.time()
@@ -4196,9 +4268,13 @@ class Bot:
             if note and self.mark(0, f"chan:notice:{region}:{note['at']}"):
                 what = ("діють графіки аварійних відключень (ГАВ)" if note["kind"] == "emergency"
                         else "графіки погодинних відключень скасовано")
-                self.channel_post(f"⚠️ <b>{region_name(region, 'uk')}: {what}.</b>\nРозклад погодинних відключень зараз може не виконуватися.\n\n"
-                                  f"<i>{html.escape((REGIONS[region].get('co') or {}).get('uk') or 'ДТЕК')}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>",
-                                  [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]])
+                ntext = (f"⚠️ <b>{region_name(region, 'uk')}: {what}.</b>\nРозклад погодинних відключень зараз може не виконуватися.\n\n"
+                         f"<i>{html.escape((REGIONS[region].get('co') or {}).get('uk') or 'ДТЕК')}:</i> «{html.escape(note['text'][:250])}»\n<a href=\"{note['url']}\">Джерело</a>")
+                nbtn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}]]
+                self.channel_post(ntext, nbtn)
+                rc = self.region_channels().get(region)
+                if rc:
+                    self.channel_post(ntext, nbtn, chat=rc)
         self.channel_feed(today, now, is_today=True)
         if mins >= 12 * 60:  # tomorrow's schedules from noon on
             self.channel_feed(kyiv_midnight(*kyiv_today(1)), now, is_today=False)
@@ -4308,6 +4384,7 @@ class Bot:
         btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}],
                [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
         rel, date = self.feed_day_words(day_mid, is_today)
+        self.region_channels_feed(day_mid, now, is_today, cur, rel, date)
         summary = None
         if is_today and not st.get("morning"):
             summary, flag = "☀️ <b>Графіки на сьогодні", "morning"
@@ -4608,6 +4685,15 @@ def self_test():
     print("     " + tg.out[-1][2].replace("\n", " / ")[:300] if tg.out else "")
     step("/health for admin", lambda: bot.text(C, "/health"), lambda s: "Джерела графіків" in s)
     step("/repost without a region explains", lambda: bot.text(C, "/repost"), lambda s: "Напишіть регіон" in s)
+    step("/chan lists and explains", lambda: bot.text(C, "/chan"), lambda s: "Канали областей" in s)
+    tg.dead = {"@svitlo_dead"}
+    step("/chan: channel the bot can't post to is refused", lambda: bot.text(C, "/chan lviv @svitlo_dead"),
+         lambda s: "Не вдалося" in s and "lviv" not in bot.region_channels())
+    step("/chan: bad name", lambda: bot.text(C, "/chan lviv svitlo"), lambda s: "@назва" in s)
+    step("/chan lviv @svitlo_lviv_test", lambda: bot.text(C, "/chan lviv @svitlo_lviv_test"),
+         lambda s: "Готово" in s and bot.region_channels().get("lviv") == "@svitlo_lviv_test"
+         and any(o[1] == "@svitlo_lviv_test" and "Світло · Львівська" in o[2] for o in tg.out))
+    step("/chan lviv off", lambda: bot.text(C, "/chan lviv off"), lambda s: "вимкнено" in s and not bot.region_channels())
     print("     " + tg.out[-1][2].replace("\n", " / ")[:400] if tg.out else "")
     # watchdog: a source failing 4 h -> one alert; fixed -> one 'ok'; nothing for others
     rv, saved_rv = _scheds["rivne"], dict(_scheds["rivne"])
@@ -4769,12 +4855,20 @@ def self_test():
         n0 = len(tg.out)
         fn()
         return [o[2] for o in tg.out[n0:] if o[1] == CHANNEL and o[0] != "photo"]
+    bot.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("rchan:set:zhytomyr", "@svitlo_zt_test", 0))
+    rc_n0 = len(tg.out)
     p1 = posts_after(lambda: bot.channel_feed(D, eve, is_today=False))
     p2 = posts_after(lambda: bot.channel_feed(D, eve + 60, is_today=False))
     feed["kharkiv"] = {g: (B if g.endswith(".1") else A) for g in STANDARD_GROUPS}
     p3 = posts_after(lambda: bot.channel_feed(D, eve + 120, is_today=False))
     feed["zhytomyr"]["2.2"] = B
     p4 = posts_after(lambda: bot.channel_feed(D, eve + 180, is_today=False))
+    rcp = [o[2] for o in tg.out[rc_n0:] if o[1] == "@svitlo_zt_test"]
+    bot.db.q("DELETE FROM cache WHERE key=?", ("rchan:set:zhytomyr",))
+    step("region channel: only its region, first post then the change",
+         lambda: tg.out.append(("send", 1, "OK" if len(rcp) == 2 and "Житомирська область</b> — графік на завтра" in rcp[0]
+                                and "зміни" in rcp[1] and not any("Харків" in x for x in rcp) else f"BAD {[x[:80] for x in rcp]}", None)),
+         lambda s: s == "OK")
     feed["lviv"] = {g: "+" * 48 for g in STANDARD_GROUPS}
     morning = D + 7 * 3600 + 120
     real_today = kyiv_today
