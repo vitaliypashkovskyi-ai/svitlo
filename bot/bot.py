@@ -156,7 +156,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.18"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.19"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -310,6 +310,11 @@ T = {
         "b_share": "📤 Поділитися",
         "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
+        "g_welcome": "👋 <b>Привіт!</b> Я надсилатиму в цей чат графік відключень світла для вашого будинку: графік на завтра, попередження за 30 хв до відключення і коли світло має повернутися. Вночі (23:00–07:00) мовчу.\n\n<b>Адмін чату, вкажіть адресу будинку:</b>\n<code>/address Шевченка</code> — назва вулиці, далі виберіть вулицю й будинок кнопками.\nЯкщо будинок не в Києві — спершу /region.\nЯкщо я попрошу щось написати — відповідайте (Reply) на моє повідомлення.\n\n/now — графік зараз · /pic — картинка",
+        "g_admin_only": "Налаштовувати бота в цьому чаті може лише адмін чату.",
+        "g_admin_toast": "Лише адмін чату",
+        "b_group": "➕ Додати бота в чат будинку",
+        "group_info": "<b>Бот у чаті вашого будинку</b>\n\nДодайте мене в груповий чат будинку чи ОСББ — і я сам надсилатиму туди графік на завтра, попередження перед відключенням і коли світло має повернутися. Сусідам нічого не треба встановлювати.\n\nНатисніть кнопку нижче, виберіть чат, а потім адмін чату напише мені адресу.",
         "b_img": "🖼 Картинка", "img_caption": "<b>Черга {q}</b> · {label}\nЗелене — світло є, червоне — немає, жовте — можливо.",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
@@ -380,7 +385,7 @@ T = {
         "stats": "📊 <b>Статистика бота</b>\n\n👥 Користувачів: <b>{total}</b>\n✅ Активних: {active}\n🚫 Заблокували бота: {blocked}\n"
                  "🏠 З адресою: {with_addr}\n🔔 З нагадуваннями: {notify}\n🆕 Нових за добу: {d1} · за тиждень: {d7}\n\n"
                  "📍 <b>Регіони</b>\n{regions}\n\n🗂 Адрес усього: {addrs}\n🔢 Популярні черги: {queues}\n🌐 Мова: {langs}",
-        "commands": [("now", "Графік зараз"), ("all", "Усі мої адреси зараз"), ("pic", "Картинка графіка"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
+        "commands": [("now", "Графік зараз"), ("all", "Усі мої адреси зараз"), ("group", "Бот у чаті будинку"), ("pic", "Картинка графіка"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
@@ -443,6 +448,11 @@ T = {
         "b_share": "📤 Share",
         "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
+        "g_welcome": "👋 <b>Hi!</b> I'll post this building's power outage schedule here: tomorrow's schedule, a warning 30 min before an outage and when the power should be back. I stay quiet at night (23:00–07:00).\n\n<b>Chat admin, set the building's address:</b>\n<code>/address Шевченка</code> — the street name, then pick the street and house with the buttons.\nIf it's not in Kyiv, use /region first.\nIf I ask you to type something, reply to my message.\n\n/now — schedule now · /pic — picture",
+        "g_admin_only": "Only this chat's admins can set up the bot here.",
+        "g_admin_toast": "Chat admins only",
+        "b_group": "➕ Add the bot to your building's chat",
+        "group_info": "<b>The bot in your building's chat</b>\n\nAdd me to your building's group chat and I'll post tomorrow's schedule, warnings before outages and when the power should be back. Neighbours don't need to install anything.\n\nTap the button below, pick the chat, then a chat admin sends me the address.",
         "b_img": "🖼 Picture", "img_caption": "<b>Queue {q}</b> · {label}\nGreen — power on, red — off, yellow — maybe.",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
@@ -510,7 +520,7 @@ T = {
         "stats": "📊 <b>Bot stats</b>\n\n👥 Users: <b>{total}</b>\n✅ Active: {active}\n🚫 Blocked the bot: {blocked}\n"
                  "🏠 With an address: {with_addr}\n🔔 With reminders: {notify}\n🆕 New in 24 h: {d1} · in 7 days: {d7}\n\n"
                  "📍 <b>Regions</b>\n{regions}\n\n🗂 Addresses in total: {addrs}\n🔢 Top queues: {queues}\n🌐 Language: {langs}",
-        "commands": [("now", "Schedule now"), ("all", "All my addresses now"), ("pic", "Schedule picture"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
+        "commands": [("now", "Schedule now"), ("all", "All my addresses now"), ("group", "The bot in your building's chat"), ("pic", "Schedule picture"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
 }
@@ -1750,6 +1760,7 @@ class Bot:
         self.chat_locks = {}
         self.locks_lock = threading.Lock()
         self.stale_alerted = False
+        self.admin_cache = {}
         import queue
         self.bulk = queue.PriorityQueue()  # (priority, seq, chat_id, text): mass notifications, soonest outage first
         self.bulk_seq = 0
@@ -1849,6 +1860,9 @@ class Bot:
         t = T[u["lang"]]
         if not a:
             return t["need_addr"], None
+        if u["chat_id"] < 0:
+            return status_text(a["queue"], u["lang"], a["label"], now, a["region"]), \
+                [[{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_addr"], "callback_data": "a"}]]
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
                    [{"text": t["b_oe"] if REGIONS[a["region"]].get("source") else t["b_dtek"], "callback_data": "dtek"}],
                    [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_share"], "url": self.share_url(u, a)}]
@@ -2232,8 +2246,10 @@ class Bot:
                 [{"text": f"{t['s_ret']}: {onoff(u['ret'])}", "callback_data": "sr"}],
                 [{"text": f"{t['s_quiet']}: {onoff(u['quiet'])}", "callback_data": "sq"}],
                 [{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}],
-                [{"text": t["s_lang"], "callback_data": "sl"}],
-                [{"text": t["b_back"], "callback_data": "r"}]]
+                [{"text": t["s_lang"], "callback_data": "sl"}]]
+        if u["chat_id"] > 0:
+            rows.append([{"text": t["b_group"], "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}])
+        rows.append([{"text": t["b_back"], "callback_data": "r"}])
         return f"{t['set_title']}\n\n{t['s_before']}", rows
 
     # ---------- incoming
@@ -2241,16 +2257,91 @@ class Bot:
         with self.locks_lock:
             return self.chat_locks.setdefault(chat_id, threading.Lock())
 
+    GROUP_FREE_CALLBACKS = ("r", "x", "nw", "hp")  # anyone in a group may refresh or page; the rest is for admins
+
+    def is_group_admin(self, chat_id, user_id):
+        key = (chat_id, user_id)
+        hit = self.admin_cache.get(key)
+        if hit and time.time() - hit[1] < 600:
+            return hit[0]
+        try:
+            st = (self.tg.call("getChatMember", timeout=10, chat_id=chat_id, user_id=user_id).get("result") or {}).get("status")
+        except Exception:
+            st = None
+        ok = st in ("creator", "administrator")
+        self.admin_cache[key] = (ok, time.time())
+        return ok
+
+    def group_user(self, chat_id):
+        """A group chat is stored like a person: its address, its reminders. Groups default to quiet nights and power-back messages."""
+        if not self.db.one("SELECT 1 FROM users WHERE chat_id=?", (chat_id,)):
+            self.user(chat_id, "uk")
+            self.set_user(chat_id, quiet=1, ret=1)
+        return self.user(chat_id)
+
+    def group_message(self, m):
+        chat_id = m["chat"]["id"]
+        if m.get("migrate_to_chat_id"):  # the group became a supergroup: it keeps its address
+            new = m["migrate_to_chat_id"]
+            for table in ("users", "addresses"):
+                self.db.q(f"UPDATE {table} SET chat_id=? WHERE chat_id=?", (new, chat_id))
+            return
+        me = BOT_USERNAME.lower()
+        if any((x.get("username") or "").lower() == me for x in m.get("new_chat_members") or []) or m.get("group_chat_created"):
+            u = self.group_user(chat_id)
+            if u["blocked"]:
+                self.set_user(chat_id, blocked=0)
+            return self.tg.send(chat_id, T[u["lang"]]["g_welcome"])
+        text = (m.get("text") or "").strip()
+        if not text:
+            return
+        rest = ""
+        reply_to_me = ((m.get("reply_to_message") or {}).get("from") or {}).get("username", "").lower() == me
+        if text.startswith("/"):
+            cmd, _, rest = text.partition(" ")
+            name, _, target = cmd.partition("@")
+            if target and target.lower() != me:
+                return  # a command for another bot
+            text = (name + (" " + rest if rest else "")).strip()
+            name = name.lower()
+        elif not reply_to_me:
+            return  # ordinary chat messages are not for the bot
+        else:
+            name = ""
+        u = self.group_user(chat_id)
+        t = T[u["lang"]]
+        if name in ("/start", "/help"):
+            return self.tg.send(chat_id, t["g_welcome"])
+        if name in ("/now", "/pic", "/all", "/week"):
+            return self.text(chat_id, text)
+        if not self.is_group_admin(chat_id, (m.get("from") or {}).get("id")):
+            return self.tg.send(chat_id, t["g_admin_only"])
+        st = self.state(u)
+        if name == "/address" and rest and st.get("mk") or (name == "/address" and rest and st.get("zp_street")):
+            return self.free_text(chat_id, u, rest)  # a house number in a flow that's already going
+        return self.text(chat_id, text)
+
     def handle(self, upd):
         if "callback_query" in upd:
             cq = upd["callback_query"]
             if "message" not in cq:
                 return
             chat_id = cq["message"]["chat"]["id"]
+            if chat_id < 0 and cq.get("data", "").partition(":")[0] not in self.GROUP_FREE_CALLBACKS \
+                    and not self.is_group_admin(chat_id, cq.get("from", {}).get("id")):
+                u = self.group_user(chat_id)
+                try:
+                    self.tg.call("answerCallbackQuery", timeout=10, callback_query_id=cq["id"], text=T[u["lang"]]["g_admin_toast"], show_alert=True)
+                except Exception:
+                    pass
+                return
             with self.chat_lock(chat_id):
                 self.callback(cq)
         elif "inline_query" in upd:
             self.inline(upd["inline_query"])
+        elif "message" in upd and upd["message"].get("chat", {}).get("type") in ("group", "supergroup"):
+            with self.chat_lock(upd["message"]["chat"]["id"]):
+                self.group_message(upd["message"])
         elif "message" in upd and "text" in upd["message"]:
             m = upd["message"]
             with self.chat_lock(m["chat"]["id"]):
@@ -2341,6 +2432,8 @@ class Bot:
             self.tg.send(chat_id, *self.status_view(u))
         elif cmd == "/all":
             self.tg.send(chat_id, *self.now_view(u))
+        elif cmd == "/group":
+            self.tg.send(chat_id, t["group_info"], [[{"text": t["b_group"], "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]])
         elif cmd == "/pic":
             a = self.active_address(u)
             if not a:
@@ -3565,7 +3658,7 @@ class Bot:
                 if back is not None and s["ret"]:
                     if self.mark(cid, f"ret:{s['aid']}:{today_ts}:{back}") and not user_quiet:
                         self.tg.send(cid, t["ret"].format(t=fmt(back * 30)) + tag)
-                if crowd_alarm and cid not in reporters:  # at most once an hour per address
+                if crowd_alarm and cid not in reporters and cid > 0:  # at most once an hour per address
                     if self.mark(cid, f"crowd:{s['aid']}:{today_ts}:{int(now_min // 60)}") and not user_quiet:
                         t2 = T[s["lang"]]
                         self.tg.send(cid, t2["crowd_alert"].format(q=qn, n=t2["people"](c_off)) + tag,
@@ -3772,7 +3865,8 @@ class Bot:
         row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
         st = json.loads(row["value"]) if row else {"regs": {}}
         save = lambda: self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(st), int(now)))  # noqa: E731
-        btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+        btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}],
+               [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
         rel, date = self.feed_day_words(day_mid, is_today)
         summary = None
         if is_today and not st.get("morning"):
@@ -4016,6 +4110,8 @@ class FakeTG:
         return {"result": {"message_id": len(self.out)}}
 
     def call(self, *a, **k):
+        if a and a[0] == "getChatMember":
+            return {"result": {"status": "administrator" if k.get("user_id") in getattr(self, "admins", ()) else "member"}}
         return {}
 
 
@@ -4332,6 +4428,34 @@ def self_test():
     print("     pictures:", os.path.join(tmp, "q.png"), len(qp), os.path.join(tmp, "r.png"), len(rp))
     step("pictures: queue and regions render", lambda: tg.out.append(("send", 1, "OK" if qp[:4] == b"\x89PNG" and rp[:4] == b"\x89PNG" else "BAD", None)),
          lambda s: s == "OK")
+
+    # group chats
+    G, ADM, MEM = -100777, 501, 502
+    tg.admins = {ADM}
+    gm = lambda text, uid=ADM, **extra: bot.handle({"message": {"chat": {"id": G, "type": "group"}, "from": {"id": uid}, "text": text, **extra}})  # noqa: E731
+    gcb = lambda data, uid=ADM: bot.handle({"callback_query": {"id": "q", "from": {"id": uid}, "data": data, "message": {"chat": {"id": G, "type": "group"}, "message_id": 1}}})  # noqa: E731
+    step("group: bot added -> welcome", lambda: bot.handle({"message": {"chat": {"id": G, "type": "group"}, "from": {"id": ADM},
+                                                                         "new_chat_members": [{"id": 1, "username": BOT_USERNAME}]}}),
+         lambda s: "Привіт" in s)
+    step("group: plain chatter is ignored", lambda: gm("привіт сусіди"), lambda s: s == "")
+    step("group: command for another bot is ignored", lambda: gm("/now@OtherBot"), lambda s: s == "")
+    step("group: non-admin can't set the address", lambda: gm("/address Перемиш", uid=MEM), lambda s: "лише адмін" in s)
+    step("group: admin sets the street", lambda: gm(f"/address@{BOT_USERNAME} Перемиш"), lambda s: "Перемишльська" in s)
+    gsid = next((b["callback_data"] for r in (tg.out[-1][3] or []) for b in r if b["callback_data"].startswith(("s:", "h:"))), None)
+    if gsid and gsid.startswith("s:"):
+        gcb(gsid)
+    gh = next((b["callback_data"] for o in reversed(tg.out) for r in (o[3] or []) for b in r if b.get("callback_data", "").startswith("h:")), None)
+    n0 = len(tg.out)
+    gcb(gh, uid=MEM)
+    blocked_cb = len(tg.out) == n0
+    step("group: admin picks the house -> status with group buttons", lambda: gcb(gh) if gh else None,
+         lambda s: "Черга" in s and blocked_cb)
+    gst = tg.out[-1][3] or []
+    gu = bot.user(G)
+    step("group: quiet nights + power-back on, no report buttons", lambda: tg.out.append(("send", 1, "OK" if gu["quiet"] and gu["ret"] and not any(b.get("callback_data", "").startswith("rp") for r in gst for b in r) else "BAD", None)),
+         lambda s: s == "OK")
+    step("group: anyone can ask /now", lambda: gm("/now", uid=MEM), lambda s: "Черга" in s)
+    step("private: /group gives the link", lambda: bot.text(5151, "/group"), lambda s: "чаті вашого будинку" in s and "startgroup" in str(tg.out[-1][3]))
 
     # mass notifications go out soonest-outage first
     import queue as _q
