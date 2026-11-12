@@ -163,7 +163,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.25"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.26"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -1965,6 +1965,7 @@ class Telegram:
         self.lock = threading.Lock()
         self.next_at = 0.0
         self.on_blocked = lambda chat_id: None
+        self.setup = threading.local()  # the group chat being set up in this thread (its questions force a reply)
 
     def call(self, method, timeout=65, **params):
         return http_json(self.base + method, params, timeout=timeout)
@@ -2007,6 +2008,8 @@ class Telegram:
         p = {"text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
         if buttons:
             p["reply_markup"] = {"inline_keyboard": buttons}
+        elif getattr(self.setup, "chat", None) == chat_id:
+            p["reply_markup"] = {"force_reply": True, "input_field_placeholder": "…"}
         return self._send("sendMessage", chat_id, **p)
 
     def photo(self, chat_id, png, caption="", buttons=None):
@@ -2614,7 +2617,8 @@ class Bot:
         if not text:
             return
         rest = ""
-        reply_to_me = ((m.get("reply_to_message") or {}).get("from") or {}).get("username", "").lower() == me
+        reply_to_me = (((m.get("reply_to_message") or {}).get("from") or {}).get("username", "").lower() == me
+                       or ((m.get("via_bot") or {}).get("username") or "").lower() == me)
         if text.startswith("/"):
             cmd, _, rest = text.partition(" ")
             name, _, target = cmd.partition("@")
@@ -2635,9 +2639,16 @@ class Bot:
         if not self.is_group_admin(chat_id, (m.get("from") or {}).get("id")):
             return self.tg.send(chat_id, t["g_admin_only"])
         st = self.state(u)
-        if name == "/address" and rest and st.get("mk") or (name == "/address" and rest and st.get("zp_street")):
-            return self.free_text(chat_id, u, rest)  # a house number in a flow that's already going
-        return self.text(chat_id, text)
+        setup = getattr(self.tg, "setup", None)
+        if setup is not None:
+            setup.chat = chat_id
+        try:
+            if name == "/address" and rest and st.get("mk") or (name == "/address" and rest and st.get("zp_street")):
+                return self.free_text(chat_id, u, rest)  # a house number in a flow that's already going
+            return self.text(chat_id, text)
+        finally:
+            if setup is not None:
+                setup.chat = None
 
     def handle(self, upd):
         if "callback_query" in upd:
@@ -4887,6 +4898,8 @@ def self_test():
     step("group: quiet nights + power-back on, no report buttons", lambda: tg.out.append(("send", 1, "OK" if gu["quiet"] and gu["ret"] and not any(b.get("callback_data", "").startswith("rp") for r in gst for b in r) else "BAD", None)),
          lambda s: s == "OK")
     step("group: anyone can ask /now", lambda: gm("/now", uid=MEM), lambda s: "Черга" in s)
+    step("group: a street picked with inline search is handled", lambda: gm("📍 вул. Перемишльська", via_bot={"username": BOT_USERNAME}),
+         lambda s: "Перемишльська" in s)
     step("private: /group gives the link", lambda: bot.text(5151, "/group"), lambda s: "чаті вашого будинку" in s and "startgroup" in str(tg.out[-1][3]))
 
     # mass notifications go out soonest-outage first
@@ -4961,7 +4974,8 @@ def self_test():
         cbw = lambda data, W=W: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": W}, "message_id": 3}, "data": data})  # noqa: E731
         step(f"{rg}: pick region -> {co} queue buttons", lambda: cbw(f"rg:{rg}"),
              lambda s, co=co, q1=q1: any(co in o[2] for o in tg.out) and any(b.get("callback_data") == "qq:" + q1 for r in tg.out[-1][3] for b in r))
-        step(f"{rg}: tap {q1} -> schedule", lambda q1=q1: cbw("qq:" + q1), lambda s, q1=q1: f"Черга {q1}" in s)
+        step(f"{rg}: tap {q1} -> schedule", lambda q1=q1: cbw("qq:" + q1),
+             lambda s, q1=q1: f"Черга {q1}" in s or (T["uk"]["no_data"].split(".")[0] in s and not _scheds[rg]["data"]))
         dv = bot.dtek_view(bot.user(W))
         ok_dv = co in dv[0] and all(b.get("url") for r in dv[1] for b in r if "url" in b)
         step(f"{rg}: report view names {co}", lambda: tg.out.append(("send", W, "OK" if ok_dv else "BAD " + dv[0][:120], None)),
