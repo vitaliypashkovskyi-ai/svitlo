@@ -163,7 +163,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.27"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.28"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -2804,6 +2804,23 @@ class Bot:
             self.tg.send(chat_id, t["myid"].format(id=chat_id))
         elif cmd == "/stats" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
             self.tg.send(chat_id, self.stats_text(u["lang"]))
+        elif cmd == "/repost" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
+            region, _, which = arg.partition(" ")
+            if region not in REGIONS:
+                self.tg.send(chat_id, "Напишіть регіон: " + ", ".join(REGIONS) + "
+Напр. <code>/repost kyiv</code> (на завтра) або <code>/repost kyiv today</code>")
+            else:
+                is_today = which.strip() == "today"
+                day = kyiv_midnight(*kyiv_today(0 if is_today else 1))
+                groups = self.feed_slots(day).get(region)
+                if not groups:
+                    self.tg.send(chat_id, "Для цього регіону ще немає графіка на цей день.")
+                else:
+                    rel, date = self.feed_day_words(day, is_today)
+                    btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}?start=ch"}],
+                           [{"text": "➕ Додати бота в чат будинку", "url": f"https://t.me/{BOT_USERNAME}?startgroup=1"}]]
+                    ok = self.channel_post(self.feed_region_text(region, groups, rel, date), btn)
+                    self.tg.send(chat_id, f"Опубліковано в {CHANNEL}." if ok else "Не вдалося опублікувати.")
         elif cmd == "/health" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
             self.tg.send(chat_id, self.health_text())
         elif cmd.startswith("/"):
@@ -4591,6 +4608,7 @@ def self_test():
     step("/stats for admin", lambda: bot.text(C, "/stats"), lambda s: "Статистика" in s)
     print("     " + tg.out[-1][2].replace("\n", " / ")[:300] if tg.out else "")
     step("/health for admin", lambda: bot.text(C, "/health"), lambda s: "Джерела графіків" in s)
+    step("/repost without a region explains", lambda: bot.text(C, "/repost"), lambda s: "Напишіть регіон" in s)
     print("     " + tg.out[-1][2].replace("\n", " / ")[:400] if tg.out else "")
     # watchdog: a source failing 4 h -> one alert; fixed -> one 'ok'; nothing for others
     rv, saved_rv = _scheds["rivne"], dict(_scheds["rivne"])
