@@ -152,7 +152,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.5"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.6"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -2920,13 +2920,45 @@ class Bot:
                   "і пошук черги за адресою — у боті:</i>")
         return text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
 
+    def channel_region_spans(self, day_mid):
+        """{region: 'до 8 год без світла' / 'не заплановано'} for the regions that published day_mid."""
+        out = {}
+        for region in REGIONS:
+            data = schedule(region)
+            groups = (data or {}).get("fact", {}).get("data", {}).get(str(day_mid)) if data else None
+            if not groups:
+                continue
+            offs = [slots(hours).count("-") * 30 for hours in groups.values()]
+            hi, lo = max(offs), min(offs)
+            h = lambda m: f"{m / 60:g}".replace(".", ",")  # noqa: E731
+            out[region] = ("відключень не заплановано" if hi == 0 else
+                           f"до {h(hi)} год без світла" if lo == 0 or lo == hi else f"{h(lo)}–{h(hi)} год без світла")
+        return out
+
+    def channel_tomorrow_text(self, day_mid):
+        """The one 'tomorrow' post: published regions, then who we still wait for. None until one region publishes."""
+        spans = self.channel_region_spans(day_mid)
+        if not spans:
+            return None
+        short = lambda r: region_name(r, "uk").replace(" область", "")  # noqa: E731
+        y, m, d = time.gmtime(day_mid + 12 * 3600)[:3]
+        month = next(k for k, v in UA_MONTHS.items() if v == m)
+        lines = [f"<b>{short(r)}</b> — {spans[r]}" for r in REGIONS if r in spans]
+        waiting = [short(r) for r in REGIONS if r not in spans]
+        text = f"🌙 <b>Графіки на завтра, {d} {month}</b>\n<i>доповнюється, щойно обленерго публікують</i>\n\n" + "\n".join(lines)
+        if waiting:
+            more = f" та ще {len(waiting) - 4}" if len(waiting) > 4 else ""
+            text += "\n\n⏳ Ще чекаємо: " + ", ".join(waiting[:4]) + more
+        return text
+
     def channel_post(self, text, buttons=None):
-        """True when posted. On failure tells the admin, at most once an hour."""
+        """The sent message (truthy) when posted. On failure tells the admin, at most once an hour."""
         if isinstance(self.tg, FakeTG):
             self.tg.send(CHANNEL, text, buttons)
-            return True
-        if self.tg.send(CHANNEL, text, buttons) is not None:
-            return True
+            return {"result": {"message_id": len(self.tg.out)}}
+        res = self.tg.send(CHANNEL, text, buttons)
+        if res is not None:
+            return res
         if self.mark(0, f"chan:fail:{int(time.time() // 3600)}"):
             self.admin(f"Не вдалося опублікувати в {CHANNEL}. Перевірте, що бот — адміністратор каналу з правом публікувати.")
         return False
@@ -2936,7 +2968,7 @@ class Bot:
         today = kyiv_midnight(*kyiv_today())
         mins = (now - today) / 60
         if not self.db.one("SELECT 1 FROM cache WHERE key=?", ("chan:intro",)) and self.channel_post("💡 <b>Світло — графіки відключень по Україні</b>\n\n"
-                              "Щодня о 07:00 — графіки на сьогодні, о 22:00 — на завтра, для всіх областей, "
+                              "Щодня о 07:00 — графіки на сьогодні, а ввечері — на завтра, щойно обленерго їх публікують, для всіх областей, "
                               "де обленерго публікують їх у відкритому доступі.\n\n"
                               "У боті можна вибрати свою чергу або знайти її за адресою, отримувати сповіщення "
                               "перед відключенням і повідомити, якщо світла немає поза графіком.",
@@ -2944,10 +2976,26 @@ class Bot:
             self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, int(now)))
         if 7 * 60 <= mins < 7 * 60 + 30 and self.mark(0, f"chan:today:{today}"):
             self.channel_post(*self.channel_digest(today, "☀️ Графіки відключень на сьогодні", now))
-        if 22 * 60 <= mins < 22 * 60 + 30:
+        if mins >= 12 * 60:  # from noon: one 'tomorrow' post, edited as more regions publish or change
             tomorrow = kyiv_midnight(*kyiv_today(1))
-            if self.mark(0, f"chan:tom:{tomorrow}"):
-                self.channel_post(*self.channel_digest(tomorrow, "🌙 Графіки відключень на завтра", now))
+            body = self.channel_tomorrow_text(tomorrow)
+            if body:
+                key = f"chan:tompost:{tomorrow}"
+                row = self.db.one("SELECT value FROM cache WHERE key=?", (key,))
+                st = json.loads(row["value"]) if row else {}
+                if st.get("body") != body:
+                    g = time.gmtime(now)
+                    off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
+                    text = body + f"\n\n<i>Оновлено {time.strftime('%H:%M', time.gmtime(now + off))}</i>"
+                    btn = [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]]
+                    if st.get("mid"):
+                        self.tg.edit(CHANNEL, st["mid"], text, btn)
+                    else:
+                        res = self.channel_post(text, btn)
+                        st["mid"] = ((res or {}).get("result") or {}).get("message_id") if isinstance(res, dict) else None
+                    if st.get("mid"):
+                        st["body"] = body
+                        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(st, ensure_ascii=False), int(now)))
 
     def mark(self, chat_id, mark):
         """True the first time a mark is seen for this chat (so each reminder is sent once)."""
@@ -3335,6 +3383,32 @@ def self_test():
             pick_d = res_d[0]["input_message_content"]["message_text"]
             step("Dnipro: picked inline result -> houses", lambda: bot.text(Z, pick_d),
                  lambda s: bot.state(bot.user(Z)).get("city", {}).get("name", "") in pick_d)
+
+    # channel: the 'tomorrow' post is sent once and then edited
+    tmid = kyiv_midnight(*kyiv_today(1))
+    zsc = _scheds["zhytomyr"]
+    saved_z = dict(zsc)
+    today_groups = (zsc["data"] or {}).get("fact", {}).get("data", {}).get(str(kyiv_midnight(*kyiv_today()))) if zsc["data"] else None
+    fake = {g: {str(h): "no" if 10 <= h <= 13 else "yes" for h in range(1, 25)} for g in [f"GPV{q}" for q in STANDARD_GROUPS]}
+    zsc.update(data={"fact": {"data": {str(tmid): today_groups or fake}}}, at=time.time())
+    t20 = kyiv_midnight(*kyiv_today()) + 20 * 3600
+    bot.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", ("chan:intro", CHANNEL, 0))
+    n0 = len(tg.out)
+    bot.channel_tick(t20)
+    first = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    bot.channel_tick(t20 + 60)
+    same = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    zsc["data"]["fact"]["data"][str(tmid)] = {g: {str(h): "yes" for h in range(1, 25)} for g in [f"GPV{q}" for q in STANDARD_GROUPS]}
+    bot.channel_tick(t20 + 120)
+    after = [o for o in tg.out[n0:] if o[1] == CHANNEL]
+    ok_t = (len(first) == 1 and first[0][0] == "send" and "Графіки на завтра" in first[0][2] and "Житомирська</b>" in first[0][2]
+            and "Ще чекаємо" in first[0][2] and len(same) == 1 and len(after) == 2 and after[1][0] == "edit"
+            and "Житомирська</b> — відключень не заплановано" in after[1][2])
+    print("     tomorrow post:", first[0][2].replace("\n", " | ")[:300] if first else first)
+    step("channel: tomorrow post once, then edited", lambda: tg.out.append(("send", 1, "OK" if ok_t else "BAD", None)), lambda s: s == "OK")
+    zsc.clear()
+    zsc.update(saved_z)
+    bot.db.q("DELETE FROM cache WHERE key=?", ("chan:intro",))
 
     # channel: intro once, 07:00 digest once
     t7 = kyiv_midnight(*kyiv_today()) + 7 * 3600 + 300
