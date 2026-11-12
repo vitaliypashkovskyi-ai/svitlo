@@ -152,7 +152,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.4"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.5"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -560,7 +560,10 @@ class DB:
 
 # ===================================================================== schedule
 SLOT = {"yes": "++", "no": "--", "first": "-+", "second": "+-", "maybe": "??", "mfirst": "?+", "msecond": "+?"}
-_scheds = {r: {"at": 0, "ok_at": 0, "data": None} for r in REGIONS}
+_scheds = {r: {"at": 0, "ok_at": 0, "data": None, "err": None, "err_at": 0} for r in REGIONS}
+HEALTH_EVERY = 30 * 60      # the watchdog reads every source this often
+HEALTH_FAIL = 3 * 3600      # a source failing this long -> tell the admin
+HEALTH_EMPTY = 36 * 3600    # no schedule this long while most regions have one -> tell the admin
 _sched = _scheds["kyiv"]  # kept for the self-test
 _sched_lock = threading.Lock()
 
@@ -576,9 +579,11 @@ def schedule(region="kyiv", force=False):
             try:
                 sc["data"] = OE_READERS[src]() if src else http_json(DATA_BASE + f"{region}.json?t={int(time.time())}", timeout=30)
                 sc["ok_at"] = time.time()
+                sc["err"] = None
                 ok = True
             except Exception as e:
                 log("schedule fetch failed:", region, e)
+                sc["err"], sc["err_at"] = (repr(e)[:200], time.time())
                 sc["at"] = time.time() - SCHEDULE_TTL + 60  # retry in a minute
             # backup: YASNO's own planned outages when outage-data-ua is down or has nothing for today
             if not src and REGIONS[region].get("yasno") and not (ok and sc["data"] and days_from_today(sc["data"], time.time())):
@@ -1861,6 +1866,8 @@ class Bot:
             self.tg.send(chat_id, t["myid"].format(id=chat_id))
         elif cmd == "/stats" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
             self.tg.send(chat_id, self.stats_text(u["lang"]))
+        elif cmd == "/health" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
+            self.tg.send(chat_id, self.health_text())
         elif cmd.startswith("/"):
             self.tg.send(chat_id, t["help"])
         elif m.startswith("📍") and " · " in m and DNIPRO:
@@ -1882,6 +1889,76 @@ class Bot:
             self.pick_street(chat_id, self.user(chat_id), sid)
         else:
             self.free_text(chat_id, u, m)
+
+    # ---------- watchdog: every source is read every 30 min; failures and long silences go to the admin
+    def health(self, region):
+        row = self.db.one("SELECT value FROM cache WHERE key=?", (f"health:{region}",))
+        return json.loads(row["value"]) if row else {}
+
+    def set_health(self, region, h):
+        self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (f"health:{region}", json.dumps(h), int(time.time())))
+
+    @staticmethod
+    def kyiv_time(ts):
+        g = time.gmtime(ts)
+        off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
+        return time.strftime("%d.%m %H:%M", time.gmtime(ts + off))
+
+    def health_tick(self, now=None, fetch=True):
+        now = now or time.time()
+        if not ADMIN_CHAT_ID:
+            return
+        has = {}
+        for region in REGIONS:
+            data = schedule(region) if fetch else _scheds[region]["data"]
+            has[region] = bool(data and days_from_today(data, now))
+        most = sum(has.values()) >= len(REGIONS) / 2
+        for region in REGIONS:
+            sc, h = _scheds[region], self.health(region)
+            co = REGIONS[region].get("co", {}).get("uk") or "outage-data-ua (ДТЕК)"
+            name = f"{region_name(region, 'uk')} — {co}"
+            if sc.get("err") and not h.get("fail_since"):
+                h["fail_since"], h["err"] = int(sc["err_at"]), sc["err"]
+            elif sc.get("err"):
+                h["err"] = sc["err"]
+            elif not sc.get("err") and h.get("fail_since"):
+                h.pop("fail_since")
+                if h.get("alert") == "fail":
+                    h.pop("alert")
+                    self.admin(f"✅ <b>{html.escape(name)}</b>: знову читається.")
+            if has[region]:
+                h["data_at"] = int(now)
+                if h.get("alert") == "empty":
+                    h.pop("alert")
+                    self.admin(f"✅ <b>{html.escape(name)}</b>: графік знову є.")
+            if h.get("fail_since") and now - h["fail_since"] >= HEALTH_FAIL and h.get("alert") != "fail":
+                h["alert"] = "fail"
+                self.admin(f"⚠️ <b>{html.escape(name)}</b>: джерело не читається з {self.kyiv_time(h['fail_since'])}.\n"
+                           f"<code>{html.escape(h.get('err') or '')}</code>\n"
+                           f"<i>Користувачі бачать останній збережений графік. Можливо, сайт змінився або не працює.</i>")
+            elif (not h.get("fail_since") and not has[region] and most and h.get("data_at")
+                  and now - h["data_at"] >= HEALTH_EMPTY and h.get("alert") != "empty"):
+                h["alert"] = "empty"
+                self.admin(f"⚠️ <b>{html.escape(name)}</b>: графіка немає з {self.kyiv_time(h['data_at'])}, хоча в більшості областей він є.\n"
+                           f"<i>Сайт читається без помилок — можливо, змінився формат. Перевірте: {REGIONS[region]['dtek']}</i>")
+            self.set_health(region, h)
+
+    def health_text(self):
+        now = time.time()
+        lines = ["<b>Джерела графіків</b>"]
+        for region in REGIONS:
+            sc, h = _scheds[region], self.health(region)
+            data = sc["data"]
+            days = len(days_from_today(data, now)) if data else 0
+            if sc.get("err"):
+                mark = f"❌ помилка з {self.kyiv_time(h.get('fail_since') or sc['err_at'])}"
+            elif not sc["ok_at"]:
+                mark = "… ще не читалося"
+            else:
+                mark = f"✅ {self.kyiv_time(sc['ok_at'])[6:]}"
+            got = f"днів: {days}" if days else ("графіка немає" + (f" з {self.kyiv_time(h['data_at'])}" if h.get("data_at") else ""))
+            lines.append(f"{region_name(region, 'uk')}: {mark} · {got}")
+        return "\n".join(lines)
 
     def stats_text(self, lang):
         """Admin-only summary of who uses the bot (/stats, only for ADMIN_CHAT_ID)."""
@@ -2733,6 +2810,9 @@ class Bot:
                         self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
         if CHANNEL and not isinstance(self.tg, FakeTG):  # the self-test calls channel_tick itself
             self.safe(self.channel_tick, now)
+        if not isinstance(self.tg, FakeTG) and now - getattr(self, "health_at", 0) >= HEALTH_EVERY:
+            self.health_at = now
+            self.safe(self.health_tick, now)
         self.db.q("DELETE FROM sent WHERE at < ?", (int(now) - 3 * 86400,))
         self.db.q("DELETE FROM reports WHERE at < ?", (int(now) - 86400,))
 
@@ -3107,6 +3187,17 @@ def self_test():
     ADMIN_CHAT_ID = str(C)
     step("/stats for admin", lambda: bot.text(C, "/stats"), lambda s: "Статистика" in s)
     print("     " + tg.out[-1][2].replace("\n", " / ")[:300] if tg.out else "")
+    step("/health for admin", lambda: bot.text(C, "/health"), lambda s: "Джерела графіків" in s)
+    print("     " + tg.out[-1][2].replace("\n", " / ")[:400] if tg.out else "")
+    # watchdog: a source failing 4 h -> one alert; fixed -> one 'ok'; nothing for others
+    rv, saved_rv = _scheds["rivne"], dict(_scheds["rivne"])
+    rv.update(err="URLError('timed out')", err_at=time.time() - 4 * 3600)
+    step("watchdog: failing source -> alert", lambda: bot.health_tick(fetch=False),
+         lambda s: s.count("⚠️") == 1 and "Рівнеобленерго" in s and "не читається" in s)
+    step("watchdog: no repeat", lambda: bot.health_tick(fetch=False), lambda s: s == "")
+    rv.update(err=None, ok_at=time.time())
+    step("watchdog: fixed -> ok", lambda: bot.health_tick(fetch=False), lambda s: "✅" in s and "Рівнеобленерго" in s and "знову читається" in s)
+    rv.update(saved_rv)
     ADMIN_CHAT_ID = saved_admin
     if STREETS:
         step("list: start (districts if known, else letters)", lambda: cb("L"), lambda s: ("район" in s) if DISTRICTS else ("літеру" in s))
