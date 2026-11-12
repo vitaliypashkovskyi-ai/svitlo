@@ -128,7 +128,7 @@ REGIONS = {
               "dtek": "https://energy.volyn.ua/spozhyvacham/perervy-u-elektropostachanni/hrafik-vidkliuchen/",
               "co": {"uk": "Волиньобленерго", "en": "Volynoblenergo"},
               "phones": ["(0332) 78-48-48", "(068) 478-48-48", "(095) 478-48-48"], "tg": None, "viber": None, "city": None},
-    "chernivtsi": {"uk": "Чернівецька область", "en": "Chernivtsi region", "yasno": None, "cities": False, "source": "cv",
+    "chernivtsi": {"uk": "Чернівецька область", "en": "Chernivtsi region", "yasno": None, "cities": False, "source": "cv", "lookup": "cvs",
                    "groups": [str(i) for i in range(1, 13)],  # 12 queues, no subqueues
                    "dtek": "https://oblenergo.cv.ua/shutdowns/", "co": {"uk": "Чернівціобленерго", "en": "Chernivtsioblenergo"},
                    "phones": ["(099) 230-99-00", "(067) 230-99-00"], "tg": None, "viber": None, "city": None},
@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.7"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.8"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -316,6 +316,7 @@ T = {
         "voe_not_in": "🟢 Будинок {h}: за даними {co} він <b>не залучений</b> до графіків погодинних відключень — за графіком світло тут не вимикають.\n<i>Аварійні відключення все одно можливі.</i>",
         "voe_none": "{co} не знайшло вулицю «{street}» у «{city}». Перевірте назву (без «вул.», повністю) або виберіть чергу кнопками.",
         "b_by_address": "🔎 Знайти чергу за адресою", "mk_filial": "Виберіть дільницю Миколаївобленерго.\n<i>Місто Миколаїв — «Миколаївський РЕМ».</i>",
+        "cvs_filial": "Виберіть дільницю Чернівціобленерго.\n<i>Місто Чернівці — «ЧЕРНІВЦІ».</i>",
         "zt_filial": "Виберіть РЕМ Житомиробленерго.\n<i>Місто Житомир — «Житомирський».</i>",
         "pl_filial": "Виберіть філію або дільницю Полтаваобленерго.\n<i>Місто Полтава — «Полтавська об’єднана філія».</i>",
         "mk_level": {"ns": "Виберіть населений пункт", "street": "Виберіть вулицю"},
@@ -432,6 +433,7 @@ T = {
         "voe_not_in": "🟢 House {h}: {co} says it is <b>not included</b> in the hourly outage schedules, so the power isn't cut here by schedule.\n<i>Emergency outages are still possible.</i>",
         "voe_none": "{co} found no street «{street}» in «{city}». Check the name (full, without «вул.») or pick the queue with the buttons.",
         "b_by_address": "🔎 Find the queue by address", "mk_filial": "Pick the Mykolaivoblenergo district office.\n<i>Mykolaiv city is «Миколаївський РЕМ».</i>",
+        "cvs_filial": "Pick the Chernivtsioblenergo district office.\n<i>Chernivtsi city is «ЧЕРНІВЦІ».</i>",
         "zt_filial": "Pick the Zhytomyroblenergo district office (РЕМ).\n<i>Zhytomyr city is «Житомирський».</i>",
         "pl_filial": "Pick the Poltavaoblenergo branch or district office.\n<i>Poltava city is «Полтавська об’єднана філія».</i>",
         "mk_level": {"ns": "Pick the town or village", "street": "Pick the street"},
@@ -1624,7 +1626,7 @@ class Bot:
         rows += [btns[i:i + 4] for i in range(0, len(btns), 4)]
         rows.append([{"text": t["b_region"].format(r=region_name(u["region"], u["lang"])), "callback_data": "rg"}])
         text = t["queue_pick"].format(r=region_name(u["region"], u["lang"]), co=co, bot=t["or_bot"] if R.get("tg") else "")
-        if R.get("lookup") in ("mk", "pl", "zt"):
+        if R.get("lookup") in ("mk", "pl", "zt", "cvs"):
             rows.insert(0, [{"text": t["b_by_address"], "callback_data": "MK"}])
             return text, rows
         return text + (t["voe_hint"] if R.get("lookup") == "voe" else t["lookup_hint"] if R.get("lookup") else ""), rows
@@ -2012,7 +2014,7 @@ class Bot:
         """Plain text: a house number, a street name or (in regions with towns) a town name."""
         st = self.state(u)
         R = REGIONS[u["region"]]
-        if R.get("lookup") in ("mk", "pl", "zt") and st.get("mk"):
+        if R.get("lookup") in ("mk", "pl", "zt", "cvs") and st.get("mk"):
             if st.get("street"):
                 hit = next((k for k, v in st.get("houses", {}).items() if v.lower() == m.strip().lower()), None)
                 return self.pick_house(chat_id, u, hit) if hit else self.tg.send(chat_id, T[u["lang"]]["no_houses"].format(q=html.escape(m)))
@@ -2108,7 +2110,39 @@ class Bot:
             out.append((cells[3], q, cells[6].startswith("побутові")))
         return out
 
+    def cv_dir(self, diln):
+        """Chernivtsioblenergo's published list for a district office: {town: {street: {house: group}}}. Cached a day."""
+        key = f"cv:dir:{diln}"
+        row = self.db.one("SELECT value, at FROM cache WHERE key=?", (key,))
+        if row and time.time() - row["at"] < 86400:
+            return json.loads(row["value"])
+        try:
+            page = oe_page(f"https://oblenergo.cv.ua/shutdowns-search/{int(diln)}/")
+        except Exception:
+            if row:
+                return json.loads(row["value"])
+            raise
+        out = {}
+        for town, street, house, group in _re.findall(r"<div>(?:<s>(.*?)</s>)?<p>(.*?)</p><b>(.*?)</b><u>(\d{1,2})</u></div>", page):
+            street, house = html.unescape(street).strip(), html.unescape(house).strip()
+            if not street or _re.fullmatch(r"[0-9a-f-]{30,}", street) or _re.fullmatch(r"[0-9a-f-]{30,}", house):
+                continue
+            house = _re.sub(r"^буд\.\s*", "", house)[:20]
+            town = html.unescape(town).strip() or "м. Чернівці"
+            out.setdefault(town, {}).setdefault(street, {})[house] = group
+        if out:
+            self.db.q("INSERT OR REPLACE INTO cache(key,value,at) VALUES(?,?,?)", (key, json.dumps(out, ensure_ascii=False), int(time.time())))
+        return out
+
+    def cv_streets(self, path):
+        return sorted(self.cv_dir(path["fil"]["id"]).get(path["ns"]["name"], {}), key=ua_key)
+
     def dir_filials(self, region):
+        if region == "cvs":
+            page = oe_page("https://oblenergo.cv.ua/shutdowns-search/")
+            m = _re.search(r'<select name="diln"[^>]*>(.*?)</select>', page, _re.S)
+            items = [[v, html.unescape(n).strip()] for v, n in _re.findall(r'value="(\d+)"[^>]*>([^<]+)', m.group(1) if m else "") if v != "0"]
+            return sorted(items, key=lambda x: (x[1] != "ЧЕРНІВЦІ", ua_key(x[1])))
         if region == "zt":
             return sorted(self.zt_options(self.zt_get(""), "rem_id"), key=lambda x: (x[1] != "Житомирський", ua_key(x[1])))
         if region == "pl":
@@ -2130,6 +2164,8 @@ class Bot:
                       key=lambda x: (not x[1].startswith("Миколаївський"), ua_key(x[1])))
 
     def dir_towns(self, region, fid):
+        if region == "cvs":  # ids are positions in the sorted list (names can be too long for a button)
+            return [[str(i), n] for i, n in enumerate(sorted(self.cv_dir(fid), key=ua_key))]
         if region == "zt":
             return self.zt_options(self.zt_get(f"?rem_id={fid}"), "naspunkt_id")
         if region == "pl":
@@ -2137,6 +2173,8 @@ class Bot:
         return [[str(x["idnaspunkt"]), x["naznaspunkt"]] for x in self.mk_get(f"/addr/filii/{fid}/ns") if x.get("idnaspunkt")]
 
     def dir_streets(self, region, path, town_id):
+        if region == "cvs":
+            return [[str(i), n] for i, n in enumerate(self.cv_streets(path))]
         if region == "zt":
             return self.zt_options(self.zt_get(f"?rem_id={path['fil']['id']}&naspunkt_id={town_id}"), "vulica_id")
         if region == "pl":
@@ -2144,6 +2182,10 @@ class Bot:
         return [[str(x["idstreet"]), x["nazstreet"]] for x in self.mk_get(f"/addr/ns/{town_id}/street") if x.get("idstreet")]
 
     def dir_houses(self, region, path, street_id):
+        if region == "cvs":
+            streets = self.cv_streets(path)
+            name = streets[int(street_id)] if street_id.isdigit() and int(street_id) < len(streets) else None
+            return [(h, h) for h in self.cv_dir(path["fil"]["id"]).get(path["ns"]["name"], {}).get(name, {})] if name else []
         if region == "zt":  # houses by name; their queue is looked up again from the same (cached) rows
             names = []
             for houses, _, _ in self.zt_rows(path, street_id):
@@ -2157,6 +2199,10 @@ class Bot:
         return [(str(x["iddom"]), str(x["nazdom"]).strip()) for x in self.mk_get(f"/addr/street/{street_id}/dom") if x.get("iddom")]
 
     def dir_queue(self, region, path, street_id, hid):
+        if region == "cvs":
+            streets = self.cv_streets(path)
+            name = streets[int(street_id)] if street_id.isdigit() and int(street_id) < len(streets) else None
+            return self.cv_dir(path["fil"]["id"]).get(path["ns"]["name"], {}).get(name, {}).get(hid) if name else None
         if region == "zt":  # households first (a building's shops can sit on another line), then the most common
             rows = [(q, home) for houses, q, home in self.zt_rows(path, street_id) if hid in (h.strip() for h in houses.split(","))]
             for pick in ([q for q, home in rows if home], [q for q, _ in rows]):
@@ -2251,7 +2297,7 @@ class Bot:
             return self.tg.send(chat_id, t["loe_busy"].format(co=co))
         if q == "NOT_IN":
             return self.tg.send(chat_id, t["voe_not_in"].format(h=html.escape(house or ""), co=co))
-        if q not in STANDARD_GROUPS:
+        if q not in (REGIONS[u["region"]].get("groups") or STANDARD_GROUPS):
             return self.tg.send(chat_id, t["loe_no_queue"].format(h=html.escape(house or ""), co=co, v="—"), self.queue_pick_view(u)[1])
         ns = (st.get("mk", {}).get("path", {}).get("ns") or {}).get("name", "")
         label = f"{ns}, {st['street']['name']}, {house}"
@@ -2658,7 +2704,7 @@ class Bot:
         house = st.get("houses", {}).get(hid)
         if not house or not st.get("street"):
             return
-        if REGIONS[u["region"]].get("lookup") in ("mk", "pl", "zt"):
+        if REGIONS[u["region"]].get("lookup") in ("mk", "pl", "zt", "cvs"):
             return self.mk_house(chat_id, u, hid, message_id)
         if REGIONS[u["region"]].get("lookup") in ("loe", "voe"):
             value = st.get("loe_q", {}).get(hid, "")
@@ -3519,6 +3565,22 @@ def self_test():
             h1 = next((k for k, v in bot.state(bot.user(M)).get("houses", {}).items() if v == "1"), None)
             if h1:
                 step("Mykolaiv: house 1 -> queue", lambda: cbm(f"h:{h1}"), lambda s: "Черга" in s and "Соборна, 1" in s)
+
+    # Chernivtsi region: дільниця -> town -> street -> house from the operator's published lists
+    CV = 7970
+    bot.user(CV, "uk")
+    bot.set_user(CV, region="chernivtsi")
+    cbc = lambda data: bot.callback({"id": "x", "from": {}, "message": {"chat": {"id": CV}, "message_id": 9}, "data": data})  # noqa: E731
+    step("Chernivtsi: дільниці", lambda: cbc("MK"), lambda s: "Чернівціобленерго" in s)
+    cf = next((b["callback_data"][4:] for r in (tg.out[-1][3] or []) for b in r if b["text"] == "ЧЕРНІВЦІ"), None)
+    if cf:
+        step("Chernivtsi: city -> streets", lambda: cbc(f"MKF:{cf}"), lambda s: "вулицю" in s)
+        step("Chernivtsi: type 'ГЕРОЇВ КРУТ'", lambda: bot.text(CV, "героїв крут"), lambda s: "вулицю" in s)
+        cs = next((b["callback_data"][4:] for r in (tg.out[-1][3] or []) for b in r if "ГЕРОЇВ КРУТ" in b["text"]), None)
+        if cs:
+            step("Chernivtsi: street -> houses", lambda: cbc(f"MKI:{cs}"), lambda s: "ГЕРОЇВ КРУТ" in s and "будин" in s)
+            step("Chernivtsi: house 10 -> group 4", lambda: bot.text(CV, "10"), lambda s: "Черга 4</b>" in s and "ГЕРОЇВ КРУТ, 10" in s)
+    ok &= bool(cf)
 
     # Zhytomyr region: РЕМ -> town -> street -> house on unhooking-search.php
     Z = 7960
