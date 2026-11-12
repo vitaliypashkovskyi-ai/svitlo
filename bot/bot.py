@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.12"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.15"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -309,6 +309,7 @@ T = {
         "b_share": "📤 Поділитися",
         "share_text": "Графік відключень світла для черги {q} ({r}) і нагадування перед відключенням — у Telegram-боті:",
         "deep_added": "Додав чергу {q} ({r}). Щоб знайти свою чергу за адресою — /address",
+        "b_img": "🖼 Картинка", "img_caption": "<b>Черга {q}</b> · {label}\nЗелене — світло є, червоне — немає, жовте — можливо.",
         "b_dtek": "📞 Повідомити ДТЕК", "b_oe": "📞 Повідомити обленерго",
         "lookup_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть назву населеного пункту, наприклад <b>Львів</b>.",
         "zpa_hint": "\n\n🔎 <b>Або знайдіть чергу за адресою:</b> напишіть вулицю (м. Запоріжжя), наприклад <b>Авраменка</b>, або населений пункт Запорізького району і вулицю через кому: <b>Сонячне, Ясна</b>.",
@@ -359,6 +360,14 @@ T = {
         "s_lang": "🇬🇧 English",
         # notifications
         "warn": "⚠️ Через {m} хв відключення світла ({t}).",
+        "charge": "🔋 <b>Зарядіть телефон і павербанк.</b>\nО {t} вимкнуть світло на <b>{h}</b> (до {end}).",
+        "now_title": "<b>Зараз, {t}</b>", "now_on": "🟢 є до {t}", "now_off": "🔴 немає до {t}", "now_maybe": "🟡 можливо немає до {t}",
+        "now_on_end": "🟢 є", "now_off_end": "🔴 немає", "now_none": "графік не опубліковано",
+        "week_title": "<b>Ваш тиждень</b> · {label} · черга {q}",
+        "week_total": "Без світла <b>{h}</b> за 7 днів.", "week_more": " Це на {d} більше, ніж тижнем раніше.",
+        "week_less": " Це на {d} менше, ніж тижнем раніше.", "week_same": "",
+        "week_worst": "Найважчий день — {day} ({h}).", "week_none": "Тижневої статистики ще немає — вона з'явиться через кілька днів.",
+        "days_short": ["пн", "вт", "ср", "чт", "пт", "сб", "нд"], "days_full": ["понеділок", "вівторок", "середа", "четвер", "пʼятниця", "субота", "неділя"],
         "ret": "💡 За графіком світло мало повернутися о {t}.",
         "changed_today": "🔁 ДТЕК змінив графік на сьогодні.",
         "tomorrow_published": "📅 Опубліковано графік на завтра.",
@@ -370,7 +379,7 @@ T = {
         "stats": "📊 <b>Статистика бота</b>\n\n👥 Користувачів: <b>{total}</b>\n✅ Активних: {active}\n🚫 Заблокували бота: {blocked}\n"
                  "🏠 З адресою: {with_addr}\n🔔 З нагадуваннями: {notify}\n🆕 Нових за добу: {d1} · за тиждень: {d7}\n\n"
                  "📍 <b>Регіони</b>\n{regions}\n\n🗂 Адрес усього: {addrs}\n🔢 Популярні черги: {queues}\n🌐 Мова: {langs}",
-        "commands": [("now", "Графік зараз"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
+        "commands": [("now", "Графік зараз"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
@@ -433,6 +442,7 @@ T = {
         "b_share": "📤 Share",
         "share_text": "Power outage schedule for queue {q} ({r}) and reminders before outages — in this Telegram bot:",
         "deep_added": "Added queue {q} ({r}). To find your own queue by address — /address",
+        "b_img": "🖼 Picture", "img_caption": "<b>Queue {q}</b> · {label}\nGreen — power on, red — off, yellow — maybe.",
         "b_dtek": "📞 Report to DTEK", "b_oe": "📞 Report to the grid operator",
         "lookup_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the town name in Ukrainian, e.g. <b>Львів</b>.",
         "zpa_hint": "\n\n🔎 <b>Or find the queue by address:</b> type the street in Ukrainian (Zaporizhzhia city), e.g. <b>Авраменка</b>, or a Zaporizhzhia district town and street separated by a comma: <b>Сонячне, Ясна</b>.",
@@ -480,6 +490,14 @@ T = {
         "s_before": "Warn me before an outage:", "s_min": "{m} min", "on": "on", "off": "off",
         "s_lang": "🇺🇦 Українська",
         "warn": "⚠️ Power outage in {m} min ({t}).",
+        "charge": "🔋 <b>Charge your phone and power bank.</b>\nThe power goes off at {t} for <b>{h}</b> (until {end}).",
+        "now_title": "<b>Now, {t}</b>", "now_on": "🟢 on until {t}", "now_off": "🔴 off until {t}", "now_maybe": "🟡 maybe off until {t}",
+        "now_on_end": "🟢 on", "now_off_end": "🔴 off", "now_none": "schedule not published",
+        "week_title": "<b>Your week</b> · {label} · queue {q}",
+        "week_total": "No power for <b>{h}</b> in 7 days.", "week_more": " That's {d} more than the week before.",
+        "week_less": " That's {d} less than the week before.", "week_same": "",
+        "week_worst": "The hardest day was {day} ({h}).", "week_none": "No weekly stats yet — they'll appear in a few days.",
+        "days_short": ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"], "days_full": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
         "ret": "💡 Power was scheduled to come back at {t}.",
         "changed_today": "🔁 DTEK changed today's schedule.",
         "tomorrow_published": "📅 Tomorrow's schedule is out.",
@@ -491,7 +509,7 @@ T = {
         "stats": "📊 <b>Bot stats</b>\n\n👥 Users: <b>{total}</b>\n✅ Active: {active}\n🚫 Blocked the bot: {blocked}\n"
                  "🏠 With an address: {with_addr}\n🔔 With reminders: {notify}\n🆕 New in 24 h: {d1} · in 7 days: {d7}\n\n"
                  "📍 <b>Regions</b>\n{regions}\n\n🗂 Addresses in total: {addrs}\n🔢 Top queues: {queues}\n🌐 Language: {langs}",
-        "commands": [("now", "Schedule now"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
+        "commands": [("now", "Schedule now"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
 }
@@ -534,6 +552,10 @@ class DB:
                 tom_ts INTEGER, tom_sig TEXT);
             CREATE TABLE IF NOT EXISTS sent(chat_id INTEGER, mark TEXT, at INTEGER, PRIMARY KEY(chat_id, mark));
             CREATE TABLE IF NOT EXISTS pending(chat_id INTEGER, key TEXT, text TEXT, at INTEGER, PRIMARY KEY(chat_id, key));
+            CREATE TABLE IF NOT EXISTS history(region TEXT, queue TEXT, day_ts INTEGER, off_min INTEGER,
+                PRIMARY KEY(region, queue, day_ts));
+            CREATE TABLE IF NOT EXISTS pubs(region TEXT, day_ts INTEGER, at INTEGER, changes INTEGER DEFAULT 0,
+                PRIMARY KEY(region, day_ts));
             CREATE TABLE IF NOT EXISTS reports(chat_id INTEGER, region TEXT, queue TEXT, state TEXT, at INTEGER,
                 PRIMARY KEY(chat_id, region, queue));
             """)
@@ -643,7 +665,15 @@ def kyiv_midnight(y, m, d):
     return calendar.timegm((y, m, d, 0, 0, 0)) - (3 if summer else 2) * 3600
 
 
+NET_CAP = [None]  # the self-test caps waits on slow sites so an update check stays well inside its time limit
+
+
+def net_timeout(t):
+    return min(t, NET_CAP[0]) if NET_CAP[0] else t
+
+
 def oe_get(url, timeout=30):
+    timeout = net_timeout(timeout)
     req = urllib.request.Request(url, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)",
                                                "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -849,7 +879,7 @@ def read_yasno(region_id, dso_id):
 
 def oe_page(url, data=None):
     req = urllib.request.Request(url, data=data, headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
-    with urllib.request.urlopen(req, timeout=40) as r:
+    with urllib.request.urlopen(req, timeout=net_timeout(40)) as r:
         return r.read(3_000_000).decode("utf-8", "replace")
 
 
@@ -1003,7 +1033,7 @@ def read_zt():
     'наразі не діють' (and no emergency outages mentioned) nothing is scheduled today."""
     req = urllib.request.Request("https://www.ztoe.com.ua/unhooking-search.php",
                                  headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
-    with urllib.request.urlopen(req, timeout=40) as r:
+    with urllib.request.urlopen(req, timeout=net_timeout(40)) as r:
         page = r.read(3_000_000).decode("cp1251", "replace")
     heads = [(m.start(), m.group(1)) for m in _re.finditer(r'colspan="48"[^>]*>\s*(?:<[^>]+>\s*)*(\d{2}\.\d{2}\.\d{4})', page)]
     days = {}
@@ -1298,7 +1328,7 @@ def notice_zp():
 def notice_zt():
     req = urllib.request.Request("https://www.ztoe.com.ua/unhooking-search.php",
                                  headers={"User-Agent": "svitlo-kyiv-bot/1.0 (github.com/vitaliypashkovskyi-ai/svitlo)"})
-    with urllib.request.urlopen(req, timeout=40) as r:
+    with urllib.request.urlopen(req, timeout=net_timeout(40)) as r:
         page = r.read(3_000_000).decode("cp1251", "replace")
     i = page.find("УВАГА")
     top = html_text(page[i:i + 3000]) if i >= 0 else ""
@@ -1456,6 +1486,183 @@ def status_text(queue, lang, label, now=None, region="kyiv"):
 
 
 # ===================================================================== telegram sending (rate-limited)
+
+# ===================================================================== pictures (stdlib PNG + a 5x7 pixel font)
+_GLYPHS = """
+А .###. #...# #...# ##### #...# #...# #...#
+Б ##### #.... #.... ####. #...# #...# ####.
+В ####. #...# #...# ####. #...# #...# ####.
+Г ##### #.... #.... #.... #.... #.... #....
+Ґ ....# ##### #.... #.... #.... #.... #....
+Д .###. .#.#. .#.#. .#.#. .#.#. ##### #...#
+Е ##### #.... #.... ####. #.... #.... #####
+Є .###. #...# #.... ###.. #.... #...# .###.
+Ж #.#.# #.#.# .###. ..#.. .###. #.#.# #.#.#
+З .###. #...# ....# ..##. ....# #...# .###.
+И #...# #...# #..## #.#.# ##..# #...# #...#
+І .###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.
+Ї .#.#. ..... .###. ..#.. ..#.. ..#.. .###.
+Й .#.#. ..#.. #...# #..## #.#.# ##..# #...#
+К #...# #..#. #.#.. ##... #.#.. #..#. #...#
+Л ..### .#..# .#..# .#..# .#..# .#..# #...#
+М #...# ##.## #.#.# #.#.# #...# #...# #...#
+Н #...# #...# #...# ##### #...# #...# #...#
+О .###. #...# #...# #...# #...# #...# .###.
+П ##### #...# #...# #...# #...# #...# #...#
+Р ####. #...# #...# ####. #.... #.... #....
+С .###. #...# #.... #.... #.... #...# .###.
+Т ##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..
+У #...# #...# #...# .#### ....# #...# .###.
+Ф ..#.. .###. #.#.# #.#.# .###. ..#.. ..#..
+Х #...# #...# .#.#. ..#.. .#.#. #...# #...#
+Ц #..#. #..#. #..#. #..#. #..#. ##### ....#
+Ч #...# #...# #...# .#### ....# ....# ....#
+Ш #.#.# #.#.# #.#.# #.#.# #.#.# #.#.# #####
+Щ #.#.# #.#.# #.#.# #.#.# #.#.# ##### ....#
+Ь #.... #.... #.... ####. #...# #...# ####.
+Ю #..#. #.#.# #.#.# ###.# #.#.# #.#.# #..#.
+Я .#### #...# #...# .#### ..#.# .#..# #...#
+0 .###. #...# #..## #.#.# ##..# #...# .###.
+1 ..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.
+2 .###. #...# ....# ...#. ..#.. .#... #####
+3 ####. ....# ....# .###. ....# ....# ####.
+4 ...#. ..##. .#.#. #..#. ##### ...#. ...#.
+5 ##### #.... ####. ....# ....# #...# .###.
+6 ..##. .#... #.... ####. #...# #...# .###.
+7 ##### ....# ...#. ..#.. .#... .#... .#...
+8 .###. #...# #...# .###. #...# #...# .###.
+9 .###. #...# #...# .#### ....# ...#. .##..
+: ..... ..#.. ..#.. ..... ..#.. ..#.. .....
+. ..... ..... ..... ..... ..... .##.. .##..
+, ..... ..... ..... ..... .##.. ..#.. .#...
+- ..... ..... ..... .###. ..... ..... .....
+– ..... ..... ..... ####. ..... ..... .....
+· ..... ..... ..... ..#.. ..... ..... .....
+’ ..#.. ..#.. .#... ..... ..... ..... .....
+( ...#. ..#.. .#... .#... .#... ..#.. ...#.
+) .#... ..#.. ...#. ...#. ...#. ..#.. .#...
+"""
+FONT = {ln.split()[0]: ln.split()[1:] for ln in _GLYPHS.strip().splitlines()}
+FONT[" "] = ["....."] * 7
+C_ON, C_OFF, C_MAYBE, C_NONE = (151, 196, 89), (226, 75, 74), (239, 159, 39), (211, 209, 199)
+C_INK, C_MUTED, C_BG = (44, 44, 42), (136, 135, 128), (255, 255, 255)
+
+
+class Canvas:
+    def __init__(self, w, h, bg=C_BG):
+        self.w, self.h = w, h
+        self.px = bytearray(bytes(bg) * (w * h))
+
+    def rect(self, x, y, w, h, c):
+        x0, y0, x1, y1 = max(0, int(x)), max(0, int(y)), min(self.w, int(x + w)), min(self.h, int(y + h))
+        if x1 <= x0 or y1 <= y0:
+            return
+        row = bytes(c) * (x1 - x0)
+        for yy in range(y0, y1):
+            i = (yy * self.w + x0) * 3
+            self.px[i:i + len(row)] = row
+
+    @staticmethod
+    def text_w(text, scale=3):
+        return len(text) * 6 * scale
+
+    def text(self, x, y, text, c=C_INK, scale=3):
+        for ch in text.upper():
+            for r, line in enumerate(FONT.get(ch, FONT[" "])):
+                for col, bit in enumerate(line):
+                    if bit == "#":
+                        self.rect(x + col * scale, y + r * scale, scale, scale, c)
+            x += 6 * scale
+        return x
+
+    def png(self):
+        raw = b"".join(b"\x00" + bytes(self.px[y * self.w * 3:(y + 1) * self.w * 3]) for y in range(self.h))
+
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", self.w, self.h, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def _mix(a, b, f):
+    return tuple(int(x + (y - x) * f) for x, y in zip(a, b))
+
+
+def short_region(region):
+    return region_name(region, "uk").replace(" область", "")
+
+
+def queue_png(region, queue, now=None):
+    """Today's and tomorrow's day strip for a queue: green power, red none, amber maybe; a line at 'now'."""
+    now = now or time.time()
+    data = schedule(region)
+    days = [d for d in (days_from_today(data, now) if data else []) if queue_key(queue) in d[1]][:2]
+    cell, x0, W = 18, 48, 960
+    H = 90 + 170 * max(1, len(days)) + 60
+    cv = Canvas(W, H)
+    cv.text(x0, 24, f"ЧЕРГА {queue} · {short_region(region)}", C_INK, 4)
+    y = 90
+    for n, (day_ts, groups) in enumerate(days):
+        sl = slots(groups.get(queue_key(queue)))
+        off = sl.count("-") * 30
+        g = time.gmtime(day_ts + 12 * 3600)
+        label = ("СЬОГОДНІ" if day_ts <= now else "ЗАВТРА") + f" {g.tm_mday:02d}.{g.tm_mon:02d} · БЕЗ СВІТЛА {off // 60}"
+        label += (f",5 ГОД" if off % 60 else " ГОД")
+        cv.text(x0, y, label, C_INK, 3)
+        by = y + 40
+        for i, ch in enumerate(sl):
+            cv.rect(x0 + i * cell, by, cell - 1, 64, {"+": C_ON, "-": C_OFF, "?": C_MAYBE}.get(ch, C_NONE))
+        if day_ts <= now < day_ts + 86400:
+            nx = x0 + int((now - day_ts) / 1800 * cell)
+            cv.rect(nx - 2, by - 8, 4, 80, C_INK)
+        for h in range(0, 25, 3):
+            t = f"{h:02d}"
+            cv.text(x0 + h * 2 * cell - cv.text_w(t, 2) // 2, by + 74, t, C_MUTED, 2)
+        y += 170
+    if not days:
+        cv.text(x0, y, "ГРАФІК ЩЕ НЕ ОПУБЛІКОВАНО", C_MUTED, 3)
+    ly = H - 44
+    x = x0
+    for c, t in ((C_ON, "Є СВІТЛО"), (C_OFF, "НЕМАЄ"), (C_MAYBE, "МОЖЛИВО")):
+        cv.rect(x, ly, 22, 22, c)
+        x = cv.text(x + 32, ly + 1, t, C_MUTED, 3) + 36
+    return cv.png()
+
+
+def regions_png(day_mid, title, cur):
+    """All regions on one picture: per half-hour, the share of a region's queues without power (green -> red)."""
+    names = [(r, short_region(r)) for r in REGIONS]
+    name_w = max(Canvas.text_w(n, 3) for _, n in names) + 30
+    cell, row_h, x0 = 13, 34, 30
+    W = x0 + name_w + 48 * cell + 30
+    H = 100 + row_h * len(names) + 110
+    cv = Canvas(W, H)
+    cv.text(x0, 30, title, C_INK, 4)
+    y = 100
+    for region, name in names:
+        cv.text(x0, y + 6, name, C_INK if region in cur else C_MUTED, 3)
+        bx = x0 + name_w
+        groups = cur.get(region)
+        for i in range(48):
+            if groups:
+                f = sum(1 for sl in groups.values() if sl[i] == "-") / len(groups)
+                c = C_ON if f == 0 else _mix((245, 190, 180), C_OFF, f)
+            else:
+                c = C_NONE
+            cv.rect(bx + i * cell, y + 2, cell - 1, row_h - 6, c)
+        y += row_h
+    bx = x0 + name_w
+    for h in range(0, 25, 3):
+        t = f"{h:02d}"
+        cv.text(bx + h * 2 * cell - cv.text_w(t, 2) // 2, y + 8, t, C_MUTED, 2)
+    ly = y + 50
+    x = x0
+    for c, t in ((C_ON, "Є СВІТЛО"), (_mix((245, 190, 180), C_OFF, 0.4), "ЧАСТИНА ЧЕРГ БЕЗ СВІТЛА"), (C_OFF, "УСІ ЧЕРГИ"), (C_NONE, "НЕ ОПУБЛІКОВАНО")):
+        cv.rect(x, ly, 20, 20, c)
+        x = cv.text(x + 28, ly + 1, t, C_MUTED, 2) + 30
+    return cv.png()
+
+
 class Telegram:
     def __init__(self, token):
         self.base = f"https://api.telegram.org/bot{token}/"
@@ -1505,6 +1712,27 @@ class Telegram:
         if buttons:
             p["reply_markup"] = {"inline_keyboard": buttons}
         return self._send("sendMessage", chat_id, **p)
+
+    def photo(self, chat_id, png, caption="", buttons=None):
+        boundary = "svitlo" + str(int(time.time() * 1000))
+        fields = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"}
+        if buttons:
+            fields["reply_markup"] = json.dumps({"inline_keyboard": buttons}, ensure_ascii=False)
+        body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields.items())
+        body += (f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="svitlo.png"\r\n'
+                 f"Content-Type: image/png\r\n\r\n").encode() + png + f"\r\n--{boundary}--\r\n".encode()
+        self._throttle()
+        try:
+            req = urllib.request.Request(self.base + "sendPhoto", data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                self.on_blocked(chat_id)
+            log("sendPhoto failed", chat_id, e.code, e.read()[:200])
+        except Exception as e:
+            log("sendPhoto failed", chat_id, repr(e))
+        return None
 
     def edit(self, chat_id, message_id, text, buttons=None):
         p = {"message_id": message_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
@@ -1604,12 +1832,104 @@ class Bot:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
                    [{"text": t["b_oe"] if REGIONS[a["region"]].get("source") else t["b_dtek"], "callback_data": "dtek"}],
-                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_share"], "url": self.share_url(u, a)}]
+                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_img"], "callback_data": "img"},
+                    {"text": t["b_share"], "url": self.share_url(u, a)}]
                    + ([{"text": t["b_site"], "url": site_link(a["region"], a["queue"])}] if SITE_URL else []),
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
         text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
         line = self.crowd_line(a["region"], a["queue"], u["lang"], now)
         return (text + "\n\n" + line if line else text), buttons
+
+    def now_line(self, a, lang, now):
+        t = T[lang]
+        data = schedule(a["region"])
+        days = days_from_today(data, now) if data else []
+        if not days or days[0][0] > now or queue_key(a["queue"]) not in days[0][1]:
+            return t["now_none"]
+        seq = "".join(slots(g.get(queue_key(a["queue"]))) for _, g in days)
+        idx = min(len(seq) - 1, int((now - days[0][0]) // 1800))
+        cur, j = seq[idx], idx + 1
+        while j < len(seq) and seq[j] == cur:
+            j += 1
+        key = {"+": "now_on", "-": "now_off", "?": "now_maybe"}[cur]
+        return t[key].format(t=fmt(j * 30)) if j < len(seq) else t.get(key + "_end", t["now_on_end"])
+
+    def now_view(self, u, now=None):
+        now = now or time.time()
+        t = T[u["lang"]]
+        g = time.gmtime(now)
+        off = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0)) - kyiv_midnight(g.tm_year, g.tm_mon, g.tm_mday)
+        lines = [t["now_title"].format(t=time.strftime("%H:%M", time.gmtime(now + off))), ""]
+        for a in self.addresses(u["chat_id"]):
+            lines.append(f"<b>{html.escape(a['label'])}</b> · {a['queue']} — {self.now_line(a, u['lang'], now)}")
+        return "\n".join(lines), [[{"text": t["b_refresh"], "callback_data": "nw"}, {"text": t["b_addr"], "callback_data": "a"}]]
+
+    # ---------- 4. weekly stats from the daily history
+    def record_history(self, region, queue, days):
+        for day_ts, groups in days:
+            sl = slots(groups.get(queue_key(queue)))
+            self.db.q("INSERT OR REPLACE INTO history(region,queue,day_ts,off_min) VALUES(?,?,?,?)",
+                      (region, queue, day_ts, sl.count("-") * 30))
+
+    def week_text(self, u, now):
+        t = T[u["lang"]]
+        today = kyiv_midnight(*kyiv_today())
+        h = lambda m: (f"{m // 60} год" + (f" {m % 60} хв" if m % 60 else "")) if u["lang"] == "uk" else (f"{m // 60} h" + (f" {m % 60} min" if m % 60 else ""))  # noqa: E731
+        parts = []
+        for a in self.addresses(u["chat_id"]):
+            rows = self.db.q("SELECT day_ts, off_min FROM history WHERE region=? AND queue=? AND day_ts>? AND day_ts<=?",
+                             (a["region"], a["queue"], today - 14 * 86400, today))
+            week = {r["day_ts"]: r["off_min"] for r in rows if r["day_ts"] > today - 7 * 86400}
+            prev = [r["off_min"] for r in rows if r["day_ts"] <= today - 7 * 86400]
+            if len(week) < 3:
+                continue
+            total = sum(week.values())
+            text = t["week_title"].format(label=html.escape(a["label"]), q=a["queue"]) + "\n" + t["week_total"].format(h=h(total))
+            if len(prev) >= 3:
+                diff = total - sum(prev) * 7 // len(prev)
+                text += (t["week_more"] if diff > 0 else t["week_less"]).format(d=h(abs(diff))) if abs(diff) >= 60 else ""
+            bars = []
+            for day_ts in sorted(week):
+                wd = time.gmtime(day_ts + 12 * 3600).tm_wday
+                bars.append(f"<code>{t['days_short'][wd]} {'▰' * (week[day_ts] // 60)}{'▱' if week[day_ts] % 60 else ''}</code> {h(week[day_ts])}")
+            worst = max(week, key=week.get)
+            text += "\n\n" + "\n".join(bars) + "\n\n" + t["week_worst"].format(day=t["days_full"][time.gmtime(worst + 12 * 3600).tm_wday], h=h(week[worst]))
+            parts.append(text)
+        return "\n\n".join(parts) if parts else t["week_none"]
+
+    def week_tick(self, now):
+        """Sunday 19:00: everyone with notifications on gets their week."""
+        today = kyiv_midnight(*kyiv_today())
+        mins = (now - today) / 60
+        if time.gmtime(today + 12 * 3600).tm_wday != 6 or not (19 * 60 <= mins < 19 * 60 + 30):
+            return
+        for u in self.db.q("SELECT * FROM users WHERE notify=1 AND blocked=0"):
+            if self.mark(u["chat_id"], f"week:{today}"):
+                text = self.week_text(u, now)
+                if text != T[u["lang"]]["week_none"]:
+                    self.tg.send(u["chat_id"], text)
+
+    # ---------- 6. when each oblenergo publishes tomorrow's schedule, and how often it changes it
+    def pubs_post(self, now):
+        today = kyiv_midnight(*kyiv_today())
+        mins = (now - today) / 60
+        if time.gmtime(today + 12 * 3600).tm_wday != 6 or not (12 * 60 <= mins < 12 * 60 + 30) or not self.mark(0, f"chan:pubs:{today}"):
+            return
+        rows = self.db.q("SELECT region, day_ts, at, changes FROM pubs WHERE day_ts>? AND day_ts<=?", (today - 6 * 86400, today + 86400))
+        by = {}
+        for r in rows:
+            by.setdefault(r["region"], []).append(((r["at"] - (r["day_ts"] - 86400)) // 60, r["changes"]))
+        avg = sorted((sum(m for m, _ in v) // len(v), r) for r, v in by.items() if len(v) >= 3)
+        if len(avg) < 3:
+            return
+        def when(m):
+            return f"{fmt(m)}" + (" (вночі)" if m >= 1440 else "")
+        lines = [f"{i}. {short_region(r)} — {when(m)}" for i, (m, r) in enumerate(avg, 1)]
+        ch = sorted(((sum(c for _, c in v), r) for r, v in by.items()), reverse=True)
+        text = ("📊 <b>Коли обленерго публікували графік на завтра</b>\n<i>середній час за тиждень</i>\n\n" + "\n".join(lines))
+        if ch and ch[0][0] > 0:
+            text += f"\n\nНайчастіше змінювали графік: {short_region(ch[0][1])} ({ch[0][0]} разів за тиждень)."
+        self.channel_post(text, [[{"text": "💡 Моя черга — у боті", "url": f"https://t.me/{BOT_USERNAME}"}]])
 
     def dtek_view(self, u, now=None):
         """Official ways to report an outage, plus a ready-made text. The person sends it themselves."""
@@ -1997,7 +2317,12 @@ class Bot:
         elif cmd == "/help":
             self.tg.send(chat_id, t["help"])
         elif cmd == "/now":
-            self.tg.send(chat_id, *self.status_view(u))
+            if len(self.addresses(chat_id)) > 1:
+                self.tg.send(chat_id, *self.now_view(u))
+            else:
+                self.tg.send(chat_id, *self.status_view(u))
+        elif cmd == "/week":
+            self.tg.send(chat_id, self.week_text(u, time.time()))
         elif cmd in ("/address", "/addresses"):
             if arg:
                 self.set_state(chat_id, {})
@@ -2874,7 +3199,7 @@ class Bot:
 
         def q(prefix):
             calls[0] += 1
-            if calls[0] > 400:
+            if calls[0] > (30 if NET_CAP[0] else 400):  # the self-test only needs to see houses arrive
                 return []
             return http_json(f"{YASNO}/houses?" + urllib.parse.urlencode({**base, "query": prefix}), timeout=15)
 
@@ -3017,6 +3342,14 @@ class Bot:
             return self.tg.edit(chat_id, mid, *self.houses_view(u, int(val) if val.isdigit() else 1))
         if kind == "r":
             return self.tg.edit(chat_id, mid, *self.status_view(u))
+        if kind == "nw":
+            return self.tg.edit(chat_id, mid, *self.now_view(u))
+        if kind == "img":
+            a = self.active_address(u)
+            if a:
+                return self.tg.photo(chat_id, queue_png(a["region"], a["queue"]),
+                                     t["img_caption"].format(q=a["queue"], label=html.escape(a["label"])))
+            return
         if kind == "a":
             return self.tg.edit(chat_id, mid, *self.addr_view(u))
         if kind == "as":
@@ -3131,6 +3464,9 @@ class Bot:
                         self.db.q("DELETE FROM pending WHERE chat_id=? AND key=?", (p["chat_id"], p["key"]))
         if CHANNEL and not isinstance(self.tg, FakeTG):  # the self-test calls channel_tick itself
             self.safe(self.channel_tick, now)
+            self.safe(self.pubs_post, now)
+        if not isinstance(self.tg, FakeTG):
+            self.safe(self.week_tick, now)
         if not isinstance(self.tg, FakeTG) and now - getattr(self, "health_at", 0) >= HEALTH_EVERY:
             self.health_at = now
             self.safe(self.health_tick, now)
@@ -3175,6 +3511,10 @@ class Bot:
             idx = int(now_min // 30)
             nxt_off = next((j for j in range(idx + 1, len(seq)) if seq[j] == "-" and seq[j - 1] != "-"), None)
             mins_to_off = nxt_off * 30 - now_min if nxt_off is not None else None
+            off_len = 0
+            while nxt_off is not None and nxt_off + off_len < len(seq) and seq[nxt_off + off_len] == "-":
+                off_len += 1
+            self.record_history(region, qn, days[:2])
             back = next((j for j in range(max(1, idx - 1), idx + 1)
                          if seq[j] == "+" and seq[j - 1] == "-" and 0 <= now_min - j * 30 < RETURN_WINDOW), None)
 
@@ -3189,6 +3529,10 @@ class Bot:
                 cid = s["chat_id"]
                 user_quiet = s["quiet"] and quiet_now
                 tag = "\n" + t["for_addr"].format(label=html.escape(s["label"]), q=qn)
+                if (mins_to_off is not None and 0 < mins_to_off <= 60 and s["warn_min"] < 60 and off_len >= 8
+                        and self.mark(cid, f"charge:{s['aid']}:{today_ts}:{nxt_off}") and not user_quiet):
+                    hl = f"{off_len // 2} год" + (" 30 хв" if off_len % 2 else "") if s["lang"] == "uk" else f"{off_len / 2:g} h"
+                    self.tg.send(cid, t["charge"].format(t=fmt(nxt_off * 30), h=hl, end=fmt((nxt_off + off_len) * 30)) + tag)
                 if mins_to_off is not None and 0 < mins_to_off <= s["warn_min"]:
                     if self.mark(cid, f"warn:{s['aid']}:{today_ts}:{nxt_off}") and not user_quiet:
                         self.tg.send(cid, t["warn"].format(m=int(round(mins_to_off)), t=fmt(nxt_off * 30)) + tag)
@@ -3409,7 +3753,16 @@ class Bot:
             summary, flag = "☀️ <b>Графіки на сьогодні", "morning"
         elif not is_today and not st.get("head"):
             summary, flag = "🌙 <b>Графіки на завтра — перші області", "head"
+        if not is_today:
+            for region in cur:
+                self.db.q("INSERT OR IGNORE INTO pubs(region,day_ts,at,changes) VALUES(?,?,?,0)", (region, day_mid, int(now)))
         if summary:
+            if flag == "morning":
+                try:
+                    self.tg.photo(CHANNEL, regions_png(day_mid, f"ГРАФІКИ НА СЬОГОДНІ · {date.upper()}", cur),
+                                  "☀️ Графіки на сьогодні по областях. Що темніше червоне — то більше черг без світла.")
+                except Exception as e:
+                    log("morning picture failed:", repr(e))
             if self.channel_post(self.feed_summary_text(cur, summary, date), btn):
                 st[flag], st["regs"] = True, cur
                 save()
@@ -3422,6 +3775,8 @@ class Bot:
                     else self.feed_region_text(region, cur[region], rel, date))
             if not self.channel_post(text, btn):
                 return
+            if old:
+                self.db.q("UPDATE pubs SET changes=changes+1 WHERE region=? AND day_ts=?", (region, day_mid))
             st["regs"][region] = cur[region]
             save()
 
@@ -3569,7 +3924,7 @@ class Bot:
                    "DNIPRO_FILE": os.path.join(tmp, "dnipro_streets.json")}
             try:
                 res = subprocess.run([sys.executable, "-X", "utf8", os.path.join(tmp, "bot.py"), "--test"], cwd=tmp, env=env,
-                                     capture_output=True, text=True, timeout=900)
+                                     capture_output=True, text=True, timeout=1800)
                 passed = res.returncode == 0
                 tail = (res.stdout + res.stderr)[-600:]
             except Exception as e:
@@ -3628,11 +3983,17 @@ class FakeTG:
     def edit(self, chat_id, mid, text, buttons=None):
         self.out.append(("edit", chat_id, text, buttons))
 
+    def photo(self, chat_id, png, caption="", buttons=None):
+        self.out.append(("photo", chat_id, caption, buttons))
+        self.photos = getattr(self, "photos", []) + [png]
+        return {"result": {"message_id": len(self.out)}}
+
     def call(self, *a, **k):
         return {}
 
 
 def self_test():
+    NET_CAP[0] = 12
     import copy
     import tempfile
     tmp = tempfile.mkdtemp()
@@ -3843,7 +4204,7 @@ def self_test():
     def posts_after(fn):
         n0 = len(tg.out)
         fn()
-        return [o[2] for o in tg.out[n0:] if o[1] == CHANNEL]
+        return [o[2] for o in tg.out[n0:] if o[1] == CHANNEL and o[0] != "photo"]
     p1 = posts_after(lambda: bot.channel_feed(D, eve, is_today=False))
     p2 = posts_after(lambda: bot.channel_feed(D, eve + 60, is_today=False))
     feed["kharkiv"] = {g: (B if g.endswith(".1") else A) for g in STANDARD_GROUPS}
@@ -3854,7 +4215,9 @@ def self_test():
     morning = D + 7 * 3600 + 120
     real_today = kyiv_today
     globals()["kyiv_today"] = lambda k=0: real_today(k + 1)  # pretend it's tomorrow morning
+    np5 = len(tg.out)
     p5 = posts_after(lambda: bot.channel_feed(D, morning, is_today=True))
+    morning_photo = [o for o in tg.out[np5:] if o[0] == "photo" and o[1] == CHANNEL]
     feed["rivne"] = {g: A for g in STANDARD_GROUPS}
     p6 = posts_after(lambda: bot.channel_feed(D, morning + 60, is_today=True))
     globals()["kyiv_today"] = real_today
@@ -3863,7 +4226,7 @@ def self_test():
             and len(p3) == 1 and "Харківська область</b> — графік на завтра" in p3[0] and "1.1 2.1 3.1 4.1 5.1 6.1</code> · 10:00–14:00" in p3[0]
             and len(p4) == 1 and "зміни" in p4[0] and "2.2</code> · було 00:00–02:00, 10:00–12:00 → тепер <b>10:00–14:00</b>" in p4[0]
             and len(p5) == 1 and "Графіки на сьогодні" in p5[0] and "Львівська</b> — відключень не заплановано" in p5[0]
-            and len(p6) == 1 and "Рівненська область</b> — графік на сьогодні" in p6[0])
+            and len(p6) == 1 and "Рівненська область</b> — графік на сьогодні" in p6[0] and len(morning_photo) == 1)
     for i, x in enumerate((p1, p3, p4, p5, p6), 1):
         print(f"     feed {i}:", (x[0] if x else x).replace("\n", " | ")[:260])
     step("channel feed: summary, per-region, changes, morning", lambda: tg.out.append(("send", 1, "OK" if ok_f else "BAD", None)), lambda s: s == "OK")
@@ -3887,6 +4250,59 @@ def self_test():
              lambda s: s == "OK")
     except urllib.error.URLError as e:
         print("     Volyn picture test skipped:", e)
+
+    # /now for several addresses, weekly stats, publication stats
+    NW = 7990
+    bot.user(NW, "uk")
+    schedule("zhytomyr")
+    zgr = next(iter(region_groups("zhytomyr")), "1.1")
+    bot.add_address(NW, "Дім", zgr, "zhytomyr")
+    bot.add_address(NW, "Дача", "1.1", "volyn")
+    step("/now: one line per address", lambda: bot.text(NW, "/now"), lambda s: "Зараз" in s)
+    nv = tg.out[-1][2] if tg.out else ""
+    step("/now: both addresses listed", lambda: tg.out.append(("send", 1, "OK" if "Дім" in nv and "Дача" in nv and "графік не опубліковано" in nv else "BAD " + nv[:200], None)),
+         lambda s: s == "OK")
+    td = kyiv_midnight(*kyiv_today())
+    for k, m in enumerate((600, 480, 300, 240, 0)):
+        bot.db.q("INSERT OR REPLACE INTO history(region,queue,day_ts,off_min) VALUES(?,?,?,?)", ("zhytomyr", zgr, td - k * 86400, m))
+    wk = bot.week_text(bot.user(NW), time.time())
+    print("     week:", wk.replace("\n", " | ")[:300])
+    step("/week: total and hardest day", lambda: tg.out.append(("send", 1, "OK" if "27 год" in wk and "Найважчий день" in wk and "10 год" in wk else "BAD", None)),
+         lambda s: s == "OK")
+    sun = td + ((6 - time.gmtime(td + 43200).tm_wday) % 7) * 86400
+    for r_, mins_ in (("zhytomyr", 17 * 60), ("kharkiv", 21 * 60), ("rivne", 27 * 60 + 30)):
+        for k in range(3):
+            d_ = sun - k * 86400
+            bot.db.q("INSERT OR REPLACE INTO pubs(region,day_ts,at,changes) VALUES(?,?,?,?)", (r_, d_, d_ - 86400 + mins_ * 60, 1 if r_ == "kharkiv" else 0))
+    real_today = kyiv_today
+    globals()["kyiv_today"] = lambda k=0: time.gmtime(sun + 43200 + k * 86400)[:3]
+    n0 = len(tg.out)
+    bot.pubs_post(sun + 12 * 3600 + 60)
+    globals()["kyiv_today"] = real_today
+    pp = [o[2] for o in tg.out[n0:] if o[1] == CHANNEL]
+    print("     pubs:", pp[0].replace("\n", " | ")[:300] if pp else pp)
+    step("publication stats post", lambda: tg.out.append(("send", 1, "OK" if pp and "1. Житомирська — 17:00" in pp[0] and "03:30 (вночі)" in pp[0] and "Харківська (3 разів" in pp[0] else "BAD", None)),
+         lambda s: s == "OK")
+
+    # pictures
+    cvp = Canvas(40, 20)
+    cvp.text(1, 1, "ЧЕРГА 1.1", C_INK, 1)
+    png1 = cvp.png()
+    try:
+        w1, h1, rows1 = png_rgb(png1)
+        ok_p = (w1, h1) == (40, 20) and rows1[1][3 * 1:3 * 2] == bytes(C_INK) and all(ch in FONT for ch in "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ0123456789:.")
+    except Exception as e:
+        ok_p = False
+        print("     png:", e)
+    step("pictures: PNG round-trip and font", lambda: tg.out.append(("send", 1, "OK" if ok_p else "BAD", None)), lambda s: s == "OK")
+    schedule("zhytomyr")
+    qp = queue_png("zhytomyr", "2.2")
+    rp = regions_png(kyiv_midnight(*kyiv_today()), "ГРАФІКИ НА СЬОГОДНІ · 12 ЛИСТОПАДА", {"zhytomyr": {g: "-" * 8 + "+" * 40 for g in STANDARD_GROUPS}})
+    open(os.path.join(tmp, "q.png"), "wb").write(qp)
+    open(os.path.join(tmp, "r.png"), "wb").write(rp)
+    print("     pictures:", os.path.join(tmp, "q.png"), len(qp), os.path.join(tmp, "r.png"), len(rp))
+    step("pictures: queue and regions render", lambda: tg.out.append(("send", 1, "OK" if qp[:4] == b"\x89PNG" and rp[:4] == b"\x89PNG" else "BAD", None)),
+         lambda s: s == "OK")
 
     # notices: emergency outages and cancelled schedules
     nw = time.time()
