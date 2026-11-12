@@ -2807,8 +2807,7 @@ class Bot:
         elif cmd == "/repost" and ADMIN_CHAT_ID and str(chat_id) == ADMIN_CHAT_ID:
             region, _, which = arg.partition(" ")
             if region not in REGIONS:
-                self.tg.send(chat_id, "Напишіть регіон: " + ", ".join(REGIONS) + "
-Напр. <code>/repost kyiv</code> (на завтра) або <code>/repost kyiv today</code>")
+                self.tg.send(chat_id, "Напишіть регіон: " + ", ".join(REGIONS) + "\nНапр. <code>/repost kyiv</code> (на завтра) або <code>/repost kyiv today</code>")
             else:
                 is_today = which.strip() == "today"
                 day = kyiv_midnight(*kyiv_today(0 if is_today else 1))
