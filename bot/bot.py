@@ -155,7 +155,7 @@ UPDATE_EVERY = 3600
 REPORT_TTL = 3600
 REPORT_COOLDOWN = 120
 CROWD_MIN = 2
-BOT_VERSION = "2026-11-12.15"  # bump on every release; shown in the log at start
+BOT_VERSION = "2026-11-12.16"  # bump on every release; shown in the log at start
 STREETS_FILE = os.environ.get("STREETS_FILE", os.path.join(HERE, "streets.json"))
 LETTERS = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЮЯ"
 PAGE = 10                     # streets per page in the list
@@ -379,7 +379,7 @@ T = {
         "stats": "📊 <b>Статистика бота</b>\n\n👥 Користувачів: <b>{total}</b>\n✅ Активних: {active}\n🚫 Заблокували бота: {blocked}\n"
                  "🏠 З адресою: {with_addr}\n🔔 З нагадуваннями: {notify}\n🆕 Нових за добу: {d1} · за тиждень: {d7}\n\n"
                  "📍 <b>Регіони</b>\n{regions}\n\n🗂 Адрес усього: {addrs}\n🔢 Популярні черги: {queues}\n🌐 Мова: {langs}",
-        "commands": [("now", "Графік зараз"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
+        "commands": [("now", "Графік зараз"), ("pic", "Картинка графіка"), ("week", "Мій тиждень"), ("address", "Мої адреси"), ("region", "Вибрати регіон"), ("settings", "Нагадування й мова"),
                      ("queue", "Додати чергу вручну, напр. /queue 4.1"), ("help", "Допомога")],
     },
     "en": {
@@ -509,7 +509,7 @@ T = {
         "stats": "📊 <b>Bot stats</b>\n\n👥 Users: <b>{total}</b>\n✅ Active: {active}\n🚫 Blocked the bot: {blocked}\n"
                  "🏠 With an address: {with_addr}\n🔔 With reminders: {notify}\n🆕 New in 24 h: {d1} · in 7 days: {d7}\n\n"
                  "📍 <b>Regions</b>\n{regions}\n\n🗂 Addresses in total: {addrs}\n🔢 Top queues: {queues}\n🌐 Language: {langs}",
-        "commands": [("now", "Schedule now"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
+        "commands": [("now", "Schedule now"), ("pic", "Schedule picture"), ("week", "My week"), ("address", "My addresses"), ("region", "Choose the region"), ("settings", "Reminders and language"),
                      ("queue", "Add a queue manually, e.g. /queue 4.1"), ("help", "Help")],
     },
 }
@@ -1832,8 +1832,7 @@ class Bot:
             return t["need_addr"], None
         buttons = [[{"text": t["b_rep_off"], "callback_data": "rp:off"}, {"text": t["b_rep_on"], "callback_data": "rp:on"}],
                    [{"text": t["b_oe"] if REGIONS[a["region"]].get("source") else t["b_dtek"], "callback_data": "dtek"}],
-                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_img"], "callback_data": "img"},
-                    {"text": t["b_share"], "url": self.share_url(u, a)}]
+                   [{"text": t["b_refresh"], "callback_data": "r"}, {"text": t["b_share"], "url": self.share_url(u, a)}]
                    + ([{"text": t["b_site"], "url": site_link(a["region"], a["queue"])}] if SITE_URL else []),
                    [{"text": t["b_addr"], "callback_data": "a"}, {"text": t["b_settings"], "callback_data": "st"}]]
         text = status_text(a["queue"], u["lang"], a["label"], now, a["region"])
@@ -2321,6 +2320,12 @@ class Bot:
                 self.tg.send(chat_id, *self.now_view(u))
             else:
                 self.tg.send(chat_id, *self.status_view(u))
+        elif cmd == "/pic":
+            a = self.active_address(u)
+            if not a:
+                self.tg.send(chat_id, t["need_addr"])
+            else:
+                self.tg.photo(chat_id, queue_png(a["region"], a["queue"]), t["img_caption"].format(q=a["queue"], label=html.escape(a["label"])))
         elif cmd == "/week":
             self.tg.send(chat_id, self.week_text(u, time.time()))
         elif cmd in ("/address", "/addresses"):
@@ -4262,6 +4267,7 @@ def self_test():
     nv = tg.out[-1][2] if tg.out else ""
     step("/now: both addresses listed", lambda: tg.out.append(("send", 1, "OK" if "Дім" in nv and "Дача" in nv and "графік не опубліковано" in nv else "BAD " + nv[:200], None)),
          lambda s: s == "OK")
+    step("/pic sends the queue picture", lambda: bot.text(NW, "/pic"), lambda s: "Черга" in s and tg.out[-1][0] == "photo")
     td = kyiv_midnight(*kyiv_today())
     for k, m in enumerate((600, 480, 300, 240, 0)):
         bot.db.q("INSERT OR REPLACE INTO history(region,queue,day_ts,off_min) VALUES(?,?,?,?)", ("zhytomyr", zgr, td - k * 86400, m))
